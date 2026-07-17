@@ -391,6 +391,7 @@ def build_prompt(picks, available, my_roster, league_context, pick_number, all_p
         roster_needs_summary[pos] = f"{have}/{total_need} ({status})"
 
     bpa_player, suggested_pick, bpa_gap, trade_bait_players = calculate_bpa(available, league_context, all_players)
+    final_pick = bpa_player or suggested_pick
     if DEV_MODE:
         print(f"bpa_player: {bpa_player.get('full_name') if bpa_player else None}")
         print(f"suggested_pick: {suggested_pick.get('full_name') if suggested_pick else None}")
@@ -478,14 +479,9 @@ ROSTER NEEDS SUMMARY (have / dedicated+backup slots needed — already computed,
 CRITICAL: This summary already counts every player you have at each position, including backups and flex-only players. Never state or imply a position has "no depth," "no backup," or is a gap if this summary shows it FILLED — that is a direct contradiction of data you were given. If a position shows FILLED, only recommend adding another there for truly exceptional value or as a trade asset (use the trade_bait field for that, not the main recommendation).
 
 NOTE: Use the ROSTER CONSTRUCTION DETAIL above to determine how more players break down between dedicated and flex slots. NEVER reference "starter_needs" by name. NEVER add dedicated slots and flex slots together into a single number. Always state them separately, e.g. "2 dedicated RB slots plus 2 flex slots eligible for RB." Do not say "4 RB slots" or "4 flex-eligible slots."
-- ROSTER CONSTRUCTION RULE: Use the ROSTER NEEDS SUMMARY above to determine what's still needed. Prioritize positions where dedicated slots are unfilled before adding depth at covered positions.
-- If a MANDATORY RECOMMENDATION appears above, you must follow it. Explain the VORP advantage in your reasoning.
-- When no MANDATORY RECOMMENDATION exists and dedicated starter slots are unfilled, recommend the highest VORP player at the most needed unfilled position.
-- When all dedicated starter slots are filled, recommend the highest VORP player overall from the TOP 10 AVAILABLE PLAYERS BY VORP list, regardless of position, unless that position already has starters filled AND at least {league_context.get("backup_needs", {}).get("QB", 1)} backups drafted.
-- A position is covered when its dedicated slots are filled. Flex slots provide additional value for covered positions.
 {chr(10).join([f"- TRADE BAIT OPTION ({t['type'].upper()}): {t['name']} ({t['position']}) is the highest {'dynasty' if t['type'] == 'dynasty' else 'redraft'} value player on the board but your {t['position']} slots are full. You MUST include him in the trade_bait array with a compelling 1-2 sentence reason that explains his specific value, why he is worth drafting despite your {t['position']} depth, and what you could realistically get in a trade for him. Do NOT also include him in the alternatives array." for t in trade_bait_players if t['name'] != (suggested_pick.get('full_name') if suggested_pick else None)])}
 
-{f"MANDATORY RECOMMENDATION: Draft {bpa_player.get('full_name')} ({bpa_player.get('position')}). Their VORP exceeds the best available at your most needed position by {bpa_gap} points. You MUST recommend this player." if bpa_player else (f"SUGGESTED PICK: {suggested_pick.get('full_name')} ({suggested_pick.get('position')}). This is the highest VORP player at your most pressing need. Recommend this player unless you have a very strong reason not to." if suggested_pick else "NO STRONG RECOMMENDATION: Your roster is at capacity. All remaining available players are below replacement level or would be cut. Consider skipping this pick or taking the highest dynasty value player available for trade bait.")}
+{f'THE RECOMMENDATION HAS ALREADY BEEN DECIDED BY THE SCORING SYSTEM: {final_pick.get("full_name")} ({final_pick.get("position")}). This is not a suggestion for you to weigh — it is the answer. Your only job is to write "reasoning", "positional_note", and "upside" that explain, in specific and compelling terms, why this player and this pick make sense right now — using their real team, role, teammates, age, and how they fit this exact roster. Do NOT recommend a different player. Do NOT let ROSTER CONSTRUCTION DETAIL, PLAYERS ALREADY DRAFTED, or your own read of positional need change the recommendation — those are context for your prose, not new inputs to a decision that has already been made. The "recommendation" field in your JSON response MUST be exactly "{final_pick.get("full_name")}."' if final_pick else "NO STRONG RECOMMENDATION: Your roster is at capacity. All remaining available players are below replacement level or would be cut. Pick the single best trade-bait-caliber player as your recommendation, framed around his trade value rather than a roster need."}
 {chr(10).join([f"TRADE BAIT ALERT ({t['type'].upper()}): {t['name']} ({t['position']}) is the highest {'dynasty' if t['type'] == 'dynasty' else 'redraft'} value player on the board but your {t['position']} slots are full. Consider drafting him to trade for a needed position." for t in trade_bait_players if t['name'] != (suggested_pick.get('full_name') if suggested_pick else None) and t['name'] != (bpa_player.get('full_name') if bpa_player else None)])}
 For alternatives, provide at least 1 player from each position (QB, RB, WR, TE) and no more than 2 from any single position. Use this list — pick the highest VORP player at each position as the alternative unless you have a strong positional reason to prefer the second. Do not suggest players not on this list:
 
@@ -505,10 +501,10 @@ Respond with this exact JSON structure:
     ],
     "trade_bait": {trade_bait_json}
 }}"""
-    return prompt
+    return prompt, final_pick
 
 def get_recommendation(picks, available, my_roster, league_context, pick_number, all_players=None):
-    prompt = build_prompt(picks, available, my_roster, league_context, pick_number, all_players)
+    prompt, final_pick = build_prompt(picks, available, my_roster, league_context, pick_number, all_players)
     is_dynasty = league_context.get("is_dynasty", True)
     response = get_completion(prompt, model_key=DEFAULT_MODEL, system=get_system_prompt(is_dynasty))
 
@@ -517,6 +513,13 @@ def get_recommendation(picks, available, my_roster, league_context, pick_number,
     except json.JSONDecodeError:
         clean = response.strip().removeprefix("```json").removesuffix("```").strip()
         rec = json.loads(clean)
+
+    # The scoring system decides which player, not Claude — force the
+    # recommendation to match regardless of what Claude wrote. Claude's job
+    # is the reasoning/positional_note/upside prose, never the pick itself.
+    if final_pick:
+        rec["recommendation"] = final_pick.get("full_name")
+        rec["position"] = final_pick.get("position")
 
     is_dynasty = league_context.get("is_dynasty", True)
     tier, gap = calculate_confidence(rec.get("recommendation"), available, rec.get("alternatives", []), is_dynasty)
