@@ -404,6 +404,7 @@ def build_prompt(picks, available, my_roster, league_context, pick_number, all_p
             print(f"  → prompt will say NO STRONG RECOMMENDATION")
     
     vorp_players, replacement, _, _ = calculate_vorp(available, league_context, all_players)
+    vorp_players = _apply_salary_adjustment(vorp_players, league_context)
     # Count picks already made by position (this draft + existing roster)
     # Top 3 available players by VORP at each position — used to ground alternatives
     top_by_pos = {}
