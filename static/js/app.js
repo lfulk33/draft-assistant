@@ -451,6 +451,7 @@ function renderAlternatives(alts, tradeBait) {
       <div class="alt-top">
         <span class="alt-name">${tb.name}</span>
         ${tb.position ? `<span class="alt-pos">${tb.position}</span>` : ''}
+        ${tb.salary != null ? `<span class="salary-badge">$${tb.salary}</span>` : ''}
         <span class="trade-bait-badge">${badgeLabel}</span>
       </div>
       <div class="alt-reason">${tb.reason || 'Best available at a full position — worth drafting to trade for a positional need.'}</div>
@@ -468,6 +469,7 @@ function renderAlternatives(alts, tradeBait) {
         <span class="alt-name">${alt.name}</span>
         ${alt.position ? `<span class="alt-pos">${alt.position}</span>` : ''}
         ${alt.team ? `<span class="alt-team">${alt.team}</span>` : ''}
+        ${alt.salary != null ? `<span class="salary-badge">$${alt.salary}</span>` : ''}
       </div>
       <div class="alt-reason">${alt.reason || ''}</div>
     `;

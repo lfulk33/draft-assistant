@@ -538,13 +538,16 @@ def get_recommendation(picks, available, my_roster, league_context, pick_number,
     )
     rec["team"] = matched.get("team") if matched else None
 
-    # Enrich alternatives with team
+    # Enrich alternatives with team (and salary, for salary-cap leagues)
+    salary_cap = league_context.get("salary_cap")
     for alt in rec.get("alternatives", []):
         alt_matched = next(
             (p for p in available.values() if p.get("full_name") == alt.get("name")),
             None
         )
         alt["team"] = alt_matched.get("team") if alt_matched else None
+        if salary_cap and alt_matched:
+            alt["salary"] = salary_cap["salaries"].get(alt_matched.get("player_id"))
 
     # The whole draft is either dynasty or redraft — never a per-entry choice.
     # Claude sometimes fabricates a trade_bait entry not present in the
@@ -553,6 +556,13 @@ def get_recommendation(picks, available, my_roster, league_context, pick_number,
     # Force it to the actual league mode rather than trust whatever it wrote.
     for tb in rec.get("trade_bait", []):
         tb["type"] = "dynasty" if is_dynasty else "redraft"
+        if salary_cap:
+            tb_matched = next(
+                (p for p in available.values() if p.get("full_name") == tb.get("name")),
+                None
+            )
+            if tb_matched:
+                tb["salary"] = salary_cap["salaries"].get(tb_matched.get("player_id"))
 
     return rec
 
