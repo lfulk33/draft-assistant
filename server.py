@@ -135,6 +135,13 @@ def build_league_context(league_detail, draft_detail, my_roster, picks,
             if any(s == slot for s in league_detail.get("roster_positions", []))
         },
         "has_superflex": any(s == "SUPER_FLEX" for s in league_detail.get("roster_positions", [])),
+
+        # A continuing dynasty league's annual draft is the incoming rookie
+        # class — draft_detail.type never actually distinguishes "rookie
+        # draft" (Sleeper only uses it for snake/linear/auction), so this is
+        # the reliable signal instead. In a rookie draft, positional need
+        # shouldn't gate the recommendation at all — see calculate_bpa.
+        "is_rookie_draft": bool(is_dynasty and league_detail.get("previous_league_id")),
     }
 
 
