@@ -172,6 +172,20 @@ def _build_draft_state(draft_id, league_id, user_id):
         else get_available_players(PLAYERS, picks)
     )
 
+    # In a continuing dynasty/keeper league, every team's carried-over roster
+    # already holds real players before this draft even starts. picks only
+    # covers this draft session, so without this, anyone already rostered on
+    # another team from last season (e.g. an established starter) shows up
+    # as "available" even though they were never actually on the board.
+    all_rostered_ids = {
+        pid for r in rosters for pid in (r.get("players") or [])
+    }
+    if all_rostered_ids:
+        available = {
+            pid: p for pid, p in available.items()
+            if pid not in all_rostered_ids
+        }
+
     my_draft_picks = [
         p["player_id"]
         for p in picks
