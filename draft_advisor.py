@@ -1067,7 +1067,10 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         if DEV_MODE:
             print(f"  {pos}: dedicated_filled={dedicated_filled}, picks={picks_by_pos.get(pos,0)}, dedicated={dedicated.get(pos,0)}, backup_mult={backup_multiplier}")
 
-        urgency_scores[pos] = opportunity_cost * (1 + scarcity_ratio) * backup_multiplier
+        # opportunity_cost == 0 with scarcity_ratio == inf (no active-bound
+        # players left at all) is a real 0 * inf case — NaN otherwise.
+        # No urgency to speak of if there's no value gap to begin with.
+        urgency_scores[pos] = 0 if opportunity_cost == 0 else opportunity_cost * (1 + scarcity_ratio) * backup_multiplier
 
         if DEV_MODE:
             print(f"  {pos}: opp_cost={round(opportunity_cost)}, scarcity={round(scarcity_ratio,3)}, backup_mult={backup_multiplier}, urgency={round(urgency_scores[pos])}, slots_needed={round(slots_needed,2)}, flex_demand={round(flex_demand,2)}, pos_vorp_players={positive_vorp_players}")
@@ -1528,6 +1531,17 @@ def calculate_bpa(available, league_context, all_players=None):
             best = max(vorp_players, key=lambda x: x["vorp"])
             return None, best["player"], 0, None
         return None, None, None, None
+
+    # Rookie drafts are about accumulating the best assets, not filling
+    # this instant's roster construction — positional need/capacity gating
+    # doesn't apply. viable is already sorted by VORP descending, so the
+    # top entry is simply the best player on the board. No positional
+    # override is possible here (top player is always the pick), so no
+    # trade bait either — there's nothing being passed over.
+    if league_context.get("is_rookie_draft"):
+        if DEV_MODE:
+            print(f"  is_rookie_draft: pure BPA — {viable[0]['player'].get('full_name')}")
+        return None, viable[0]["player"], 0, []
 
     # Step 4: Count meaningful players at each position
     picks_by_pos = _count_picks_by_pos(sim_active, league_context)
