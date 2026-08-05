@@ -20,6 +20,7 @@ _ALIASES = {
     "cameron ward": "cam ward",
     "hollywood brown": "marquise brown",
     "jacory crosky-merritt": "jacory croskey-merritt",
+    "bam knight": "zonovan knight",
 }
 
 
