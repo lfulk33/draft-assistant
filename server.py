@@ -21,9 +21,21 @@ from draft_advisor import (
     get_recommendation, calculate_starter_ids,
     calculate_roster_needs, get_roster_recommendations
 )
+from salary_cap import load_salaries, load_keepers
 
 # Load players once at startup
 PLAYERS = {str(k): v for k, v in load_players().items()}
+
+# POC: salary-cap tracking, scoped to exactly one league. Not a general
+# feature yet — see project memory for the plan to generalize this later.
+DSFF_LEAGUE_ID = "1312162869869031424"
+DSFF_SALARY_CAP = 200
+DSFF_SALARIES, _dsff_salary_unmatched = load_salaries("dsff_salaries.csv", PLAYERS)
+DSFF_KEEPERS, _dsff_keeper_unmatched = load_keepers("dsff_keepers.csv", SLEEPER_USERNAME, PLAYERS)
+if _dsff_salary_unmatched:
+    print(f"[salary_cap] {len(_dsff_salary_unmatched)} salary entries unmatched: {_dsff_salary_unmatched}")
+if _dsff_keeper_unmatched:
+    print(f"[salary_cap] {len(_dsff_keeper_unmatched)} keeper entries unmatched: {_dsff_keeper_unmatched}")
 
 
 def build_league_context(league_detail, draft_detail, my_roster, picks,
@@ -228,6 +240,29 @@ def _build_draft_state(draft_id, league_id, user_id):
         league_context["my_taxi_players"] = [
             p.get("name") for p in sim_taxi.values() if p.get("name")
         ]
+
+    # POC: salary-cap budget tracking, scoped to exactly one league.
+    # remaining_slots deliberately does NOT use draft_detail.settings.rounds —
+    # that value is unreliable/not yet finalized for this league. It's a
+    # full draft meant to fill every open roster spot, so remaining slots
+    # comes from the league's actual roster construction instead.
+    if league_id == DSFF_LEAGUE_ID:
+        keeper_cost = sum(DSFF_KEEPERS.values())
+        drafted_cost = sum(DSFF_SALARIES.get(pid, 0) for pid in my_draft_picks)
+        total_spent = keeper_cost + drafted_cost
+        remaining_budget = DSFF_SALARY_CAP - total_spent
+        total_roster_spots = len(league_detail.get("roster_positions", []))
+        remaining_slots = max(1, total_roster_spots - len(DSFF_KEEPERS) - len(my_draft_picks))
+        league_context["salary_cap"] = {
+            "cap": DSFF_SALARY_CAP,
+            "keeper_cost": keeper_cost,
+            "drafted_cost": drafted_cost,
+            "total_spent": total_spent,
+            "remaining_budget": remaining_budget,
+            "remaining_slots": remaining_slots,
+            "avg_per_slot": round(remaining_budget / remaining_slots, 2),
+            "salaries": DSFF_SALARIES,
+        }
 
     return {
         "draft_detail": draft_detail,

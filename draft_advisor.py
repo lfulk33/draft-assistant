@@ -2,7 +2,7 @@ import json
 import math
 from llm_client import get_completion
 from config import DEV_MODE
-from config import TAXI_THRESHOLD_QB, TAXI_THRESHOLD_RB, TAXI_THRESHOLD_WR, TAXI_THRESHOLD_TE, REDRAFT_THRESHOLD_QB, REDRAFT_THRESHOLD_RB, REDRAFT_THRESHOLD_WR, REDRAFT_THRESHOLD_TE, URGENCY_MODIFIER, DEFAULT_MODEL, TE_FLEX_ONLY_VALUE_DISCOUNT
+from config import TAXI_THRESHOLD_QB, TAXI_THRESHOLD_RB, TAXI_THRESHOLD_WR, TAXI_THRESHOLD_TE, REDRAFT_THRESHOLD_QB, REDRAFT_THRESHOLD_RB, REDRAFT_THRESHOLD_WR, REDRAFT_THRESHOLD_TE, URGENCY_MODIFIER, DEFAULT_MODEL, TE_FLEX_ONLY_VALUE_DISCOUNT, SALARY_COMFORTABLE_PER_SLOT
 
 # Flex slot eligibility — positions that can fill each flex slot type.
 # Used in replacement level calculation, urgency scoring, and capacity checks.
@@ -520,6 +520,9 @@ def get_recommendation(picks, available, my_roster, league_context, pick_number,
     if final_pick:
         rec["recommendation"] = final_pick.get("full_name")
         rec["position"] = final_pick.get("position")
+        salary_cap = league_context.get("salary_cap")
+        if salary_cap:
+            rec["salary"] = salary_cap["salaries"].get(final_pick.get("player_id"))
 
     is_dynasty = league_context.get("is_dynasty", True)
     tier, gap = calculate_confidence(rec.get("recommendation"), available, rec.get("alternatives", []), is_dynasty)
@@ -1463,6 +1466,62 @@ def simulate_placement(candidate, sim_active, sim_taxi, league_context):
         else:
             return "CUT", None
 
+def _apply_salary_adjustment(vorp_players, league_context):
+    """
+    POC: adjusts VORP by value-per-dollar efficiency for a salary-cap
+    league (league_context["salary_cap"] present — see server.py's
+    DSFF_LEAGUE_ID). No-op for every other league.
+
+    Two effects:
+      1. Hard affordability gate — a player is dropped entirely if taking
+         him would leave less than $1 for every other remaining roster
+         slot, regardless of VORP. Not a preference, a real constraint.
+      2. Continuous value-per-dollar blend — strength scales with how
+         tight the remaining budget is (SALARY_COMFORTABLE_PER_SLOT and
+         above: barely touches VORP; toward $0/slot: efficiency dominates).
+         Players priced efficiently relative to the affordable pool get a
+         boost, inefficient ones a penalty — proportional, not a cutoff.
+
+    Original VORP is preserved as "raw_vorp"; "vorp" becomes the
+    budget-adjusted figure the rest of the BPA pipeline reads.
+    """
+    salary_cap = league_context.get("salary_cap")
+    if not salary_cap:
+        return vorp_players
+
+    salaries = salary_cap["salaries"]
+    remaining_budget = salary_cap["remaining_budget"]
+    remaining_slots = salary_cap["remaining_slots"]
+    avg_per_slot = salary_cap["avg_per_slot"]
+
+    min_bid = 1
+    max_affordable = remaining_budget - (remaining_slots - 1) * min_bid
+
+    priced = []
+    for v in vorp_players:
+        salary = salaries.get(v["player"].get("player_id"))
+        if salary is not None and salary > max_affordable:
+            continue
+        v["raw_vorp"] = v["vorp"]
+        v["salary"] = salary
+        priced.append(v)
+
+    ratios = [v["raw_vorp"] / v["salary"] for v in priced if v.get("salary") and v["raw_vorp"] > 0]
+    if not ratios:
+        return priced
+
+    pool_avg_ratio = sum(ratios) / len(ratios)
+    w = 1 - min(1, avg_per_slot / SALARY_COMFORTABLE_PER_SLOT)
+
+    for v in priced:
+        if not v.get("salary") or v["raw_vorp"] <= 0 or pool_avg_ratio <= 0:
+            continue
+        ratio = v["raw_vorp"] / v["salary"]
+        v["vorp"] = v["raw_vorp"] * (ratio / pool_avg_ratio) ** w
+
+    return priced
+
+
 def calculate_bpa(available, league_context, all_players=None):
     """
     Calculate the Best Player Available recommendation.
@@ -1501,6 +1560,10 @@ def calculate_bpa(available, league_context, all_players=None):
     # Step 1: Score all available players by VORP
     vorp_players, replacement, drafted_count, dedicated_cutoff = calculate_vorp(available, league_context, all_players)
     
+    if not vorp_players:
+        return None, None, None, None
+
+    vorp_players = _apply_salary_adjustment(vorp_players, league_context)
     if not vorp_players:
         return None, None, None, None
 

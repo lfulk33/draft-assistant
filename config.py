@@ -37,5 +37,12 @@ URGENCY_MODIFIER = 1.0
 # a league has zero dedicated TE slots. Tuned by hand against live drafts —
 # see TE_FLEX_ONLY_VALUE_DISCOUNT in draft_advisor.py for how it's applied.
 TE_FLEX_ONLY_VALUE_DISCOUNT = 0.45
+
+# POC: salary-cap draft support, scoped to exactly one league (see
+# server.py's DSFF_LEAGUE_ID). "Comfortable" budget per remaining roster
+# slot — above this, value-per-dollar barely affects the recommendation
+# (pure VORP); as the real avg-budget-per-slot drops toward $0, efficiency
+# dominates instead. Hand-tuned, adjust by feel once seen in a live draft.
+SALARY_COMFORTABLE_PER_SLOT = 20
 # LLM model selection (see llm_client.py for options)
 DEFAULT_MODEL = "claude-haiku"
