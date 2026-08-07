@@ -250,8 +250,18 @@ function renderPicksFeed(picks, currentPick, numTeams) {
   feed.appendChild(arrowEl);
   feed.appendChild(clockCard);
 
+  // Keeper slots are pre-filled by Sleeper into later rounds the moment the
+  // draft goes live, well before the draft actually reaches those rounds.
+  // Hide them until we've actually gotten there so the board only shows
+  // picks prior to the current one, not a wall of future keeper reveals.
+  const relevantPicks = picks.filter(pick => {
+    if (!pick.is_keeper) return true;
+    const round = pick.round || Math.ceil(pick.pick_no / numTeams);
+    return round <= clockRound;
+  });
+
   // Picks in reverse chronological order (most recent first)
-  const reversed = [...picks].reverse();
+  const reversed = [...relevantPicks].reverse();
   reversed.forEach(pick => {
     const card = document.createElement('div');
     const isMine = pick.is_mine;
