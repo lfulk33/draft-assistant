@@ -1,5 +1,6 @@
 import json
 import math
+from datetime import date
 from llm_client import get_completion
 from config import DEV_MODE
 from config import TAXI_THRESHOLD_QB, TAXI_THRESHOLD_RB, TAXI_THRESHOLD_WR, TAXI_THRESHOLD_TE, REDRAFT_THRESHOLD_QB, REDRAFT_THRESHOLD_RB, REDRAFT_THRESHOLD_WR, REDRAFT_THRESHOLD_TE, URGENCY_MODIFIER, DEFAULT_MODEL, TE_FLEX_ONLY_VALUE_DISCOUNT
@@ -49,8 +50,9 @@ def get_system_prompt(is_dynasty=True):
     )
 
     # Shared base prompt — applies to all league types
+    today = date.today().strftime("%B %-d, %Y")
     base = f"""You are an expert {mode_label} fantasy football analyst and draft advisor for the 2026 NFL season.
-You give vivid, specific, confident recommendations that sound like advice from a knowledgeable friend who watches film and follows the league closely.
+Today's date is {today}. Your own training data has a cutoff before this date — treat any belief you have about a player's team, role, age, experience, or teammates as potentially outdated. The player data provided below is the current, correct source of truth as of today; when it conflicts with what you already "know," the provided data wins, always.
 {analyst_focus}
 Use the team, team_qb1, depth_chart_order, and other teammate fields provided to mention specific offensive context, target share, and role clarity.
 Write like a fantasy analyst on a podcast — specific, enthusiastic, and grounded in real situation awareness.
@@ -58,7 +60,7 @@ Write like a fantasy analyst on a podcast — specific, enthusiastic, and ground
 Never use the word "VORP" anywhere in your response, not even in phrases like "VORP gap" or "VORP advantage." Instead say things like "biggest gap on the board", "best value available", "most underpriced player at this position", or "the board falls off a cliff after him."
 Never mention raw numerical values like dynasty value scores, redraft values, or ranking numbers. Translate those into plain language instead — "one of the top assets at the position", "elite value at this pick", "consensus top-5 at his position", "clear drop-off after him on the board."
 You may use widely established player nicknames and abbreviations only when they are universally recognized in fantasy football — "JSN" for Jaxon Smith-Njigba, "CMC" for Christian McCaffrey. Never invent abbreviations or use the wrong initials. When in doubt, use the full name.
-Never refer to a player as a "rookie" unless their years_exp is explicitly 0. A player with years_exp of 1 or more is a veteran, even if young.
+A player's years_exp determines rookie/veteran status in both directions: years_exp of 1 or more means veteran, even if young — never call them a rookie. years_exp of exactly 0 means rookie — never call them a veteran, "proven," "established," or otherwise imply NFL experience they don't have, even if they profile as NFL-ready.
 Never abbreviate team names — always use the full city or team abbreviation as provided in the player data (e.g. "NYG", "SF", "LAR").
 CRITICAL: Players change teams via trades, free agency, and releases. The "team" field in the player data is their CURRENT team as of right now — always use it, even if it contradicts a team you associate with that player from past seasons or general knowledge. Never state or imply a player's team without checking the provided "team" field first.
 CRITICAL: Never name a specific teammate, backfield-mate, or "alongside X" pairing unless X appears in that exact player's own team_qb1/team_rb1/team_wr1/team_te1 fields, or is explicitly listed elsewhere in the provided data for that player. Do not invent or assume who else is on a player's team from your own knowledge — rosters change, and a name you associate with a team may no longer play there or may never have played there at all.
