@@ -74,7 +74,7 @@ def build_league_context(league_detail, draft_detail, my_roster, picks,
         "taxi_years": league_detail["settings"].get("taxi_years"),
         "taxi_allow_vets": league_detail["settings"].get("taxi_allow_vets", 0),
         "picks_made_by_me": my_picks_count,
-        "picks_made_total": len(picks),
+        "picks_made_total": sum(1 for p in picks if not p.get("is_keeper")),
         "picks_remaining_for_me": total_rounds - my_picks_count,
         "my_existing_roster": my_existing_players,
         "my_picks_this_draft": [
@@ -205,10 +205,15 @@ def _build_draft_state(draft_id, league_id, user_id):
             if pid not in all_rostered_ids
         }
 
+    # Once a draft goes live, Sleeper pre-fills every keeper's slot into the
+    # picks list (is_keeper=True) — those are placeholders for players
+    # already on the roster, not real selections made this draft. Without
+    # excluding them, keepers get counted twice: once via keeper_cost (the
+    # keeper CSV) and again here as if freshly drafted.
     my_draft_picks = [
         p["player_id"]
         for p in picks
-        if p.get("roster_id") == my_roster_id and p.get("player_id")
+        if p.get("roster_id") == my_roster_id and p.get("player_id") and not p.get("is_keeper")
     ]
 
     active_ids = set(my_roster.get("players") or [])
@@ -361,7 +366,7 @@ def api_draft(draft_id):
             "draft_id": draft_id,
             "league_id": league_id,
             "picks": picks_feed,
-            "current_pick": len(picks) + 1,
+            "current_pick": sum(1 for p in picks if not p.get("is_keeper")) + 1,
             "league_context": league_context,
             "is_dynasty": is_dynasty,
             "my_roster_id": my_roster_id,
