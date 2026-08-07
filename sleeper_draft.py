@@ -41,7 +41,10 @@ def get_available_rookies(players, picks):
     }
 
 def count_my_picks(picks, my_roster_id):
-    return sum(1 for p in picks if p["roster_id"] == my_roster_id)
+    # Sleeper pre-fills keeper slots into the picks list once a draft goes
+    # live (marked is_keeper=True) — those aren't picks being made this
+    # draft, just placeholders for players already on the roster.
+    return sum(1 for p in picks if p["roster_id"] == my_roster_id and not p.get("is_keeper"))
     
 if __name__ == "__main__":
     league_id = "1312068664308019200"

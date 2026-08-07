@@ -910,7 +910,7 @@ def _has_active_redraft_viable(pos, viable_active):
         for v in viable_active
     )
 
-def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None):
+def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None, sim_active=None, replacement=None):
     """
     Calculate how urgently each position needs to be addressed THIS pick.
 
@@ -1078,11 +1078,33 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         else:
             scarcity_ratio = slots_needed / positive_vorp_players
 
-        # Reduce urgency for backup-only slots — any player fills them
-        dedicated_filled = picks_by_pos.get(pos, 0) >= dedicated.get(pos, 0)
+        # Reduce urgency for backup-only slots — any player fills them.
+        # But headcount alone isn't enough: a "dedicated" slot occupied by a
+        # below-replacement player isn't really filled in any way that should
+        # lower urgency (e.g. a nominal RB2 who's actually below replacement
+        # level is still a real need, not a backup slot). Check that the
+        # actual players occupying those dedicated slots — the top N at this
+        # position on the roster, N = dedicated slots — clear replacement
+        # level. Falls back to pure headcount if roster/replacement data
+        # isn't available.
+        dedicated_slots_needed = dedicated.get(pos, 0)
+        dedicated_filled = picks_by_pos.get(pos, 0) >= dedicated_slots_needed
+        dedicated_quality_ok = True
+        if dedicated_filled and sim_active and replacement and dedicated_slots_needed > 0:
+            value_field = league_context.get("value_type", "dynasty_value")
+            starters = sorted(
+                (p for p in sim_active.values() if p.get("position") == pos),
+                key=lambda p: p.get(value_field, 0) or 0,
+                reverse=True
+            )[:dedicated_slots_needed]
+            dedicated_quality_ok = all(
+                (s.get(value_field, 0) or 0) - replacement.get(pos, 0) > 0
+                for s in starters
+            )
+            dedicated_filled = dedicated_filled and dedicated_quality_ok
         backup_multiplier = 0.3 if dedicated_filled else 1.0
         if DEV_MODE:
-            print(f"  {pos}: dedicated_filled={dedicated_filled}, picks={picks_by_pos.get(pos,0)}, dedicated={dedicated.get(pos,0)}, backup_mult={backup_multiplier}")
+            print(f"  {pos}: dedicated_filled={dedicated_filled} (quality_ok={dedicated_quality_ok}), picks={picks_by_pos.get(pos,0)}, dedicated={dedicated_slots_needed}, backup_mult={backup_multiplier}")
 
         # opportunity_cost == 0 with scarcity_ratio == inf (no active-bound
         # players left at all) is a real 0 * inf case — NaN otherwise.
@@ -1628,7 +1650,7 @@ def calculate_bpa(available, league_context, all_players=None):
         print(f"  drafted_count before urgency: {drafted_count}")
         print(f"  dedicated_cutoff before urgency: {dedicated_cutoff}")
     most_needed_pos, urgency_scores = _calculate_urgency(
-        viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi
+        viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi, sim_active, replacement
     )
 
     # Step 6: Find the two key candidates
