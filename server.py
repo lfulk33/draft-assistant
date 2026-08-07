@@ -247,6 +247,17 @@ def _build_draft_state(draft_id, league_id, user_id):
     # full draft meant to fill every open roster spot, so remaining slots
     # comes from the league's actual roster construction instead.
     if league_id == DSFF_LEAGUE_ID:
+        # This is a continuing dynasty league, but NOT a rookie-only draft —
+        # the salary sheet has 519 priced players (established vets like
+        # Bijan Robinson $62 included), not a rookie class. is_rookie_draft's
+        # heuristic (dynasty + previous_league_id) assumes every continuing
+        # dynasty league's annual draft is rookies-only, which is wrong here:
+        # this is a full restocking draft where cut veterans re-enter the
+        # pool alongside rookies. Positional/urgency weighting needs to stay
+        # active — real salary is being spent on players who play this
+        # season, not just accumulated as future dynasty assets.
+        league_context["is_rookie_draft"] = False
+
         keeper_cost = sum(DSFF_KEEPERS.values())
         drafted_cost = sum(DSFF_SALARIES.get(pid, 0) for pid in my_draft_picks)
         total_spent = keeper_cost + drafted_cost
