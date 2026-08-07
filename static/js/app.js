@@ -287,6 +287,7 @@ function renderPicksFeed(picks, currentPick, numTeams) {
       <div class="pick-pos">
         ${pick.position ? `<span class="pick-pos-badge">${pick.position}</span>` : ''}
         ${pick.team || ''}
+        ${pick.salary != null ? `<span class="salary-badge">$${pick.salary}</span>` : ''}
       </div>
     `;
     feed.appendChild(card);
@@ -635,6 +636,10 @@ function renderNotes(rec) {
           <div class="need-item">
             <div class="need-pos">Avg/slot</div>
             <div class="need-val">$${sc.avg_per_slot}</div>
+          </div>
+          <div class="need-item">
+            <div class="need-pos">Max bid</div>
+            <div class="need-val">$${sc.max_affordable}</div>
           </div>
         </div>
       `;

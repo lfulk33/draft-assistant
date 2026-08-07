@@ -269,6 +269,11 @@ def _build_draft_state(draft_id, league_id, user_id):
         remaining_budget = DSFF_SALARY_CAP - total_spent
         total_roster_spots = len(league_detail.get("roster_positions", []))
         remaining_slots = max(1, total_roster_spots - len(DSFF_KEEPERS) - len(my_draft_picks))
+        # Most you could spend on any single player and still leave $1 for
+        # every other remaining slot — same formula as the hard affordability
+        # gate in draft_advisor._apply_salary_adjustment.
+        max_affordable = remaining_budget - (remaining_slots - 1) * 1
+
         league_context["salary_cap"] = {
             "cap": DSFF_SALARY_CAP,
             "keeper_cost": keeper_cost,
@@ -277,6 +282,7 @@ def _build_draft_state(draft_id, league_id, user_id):
             "remaining_budget": remaining_budget,
             "remaining_slots": remaining_slots,
             "avg_per_slot": round(remaining_budget / remaining_slots, 2),
+            "max_affordable": max_affordable,
             "salaries": DSFF_SALARIES,
         }
 
@@ -359,6 +365,7 @@ def api_draft(draft_id):
                 "team": PLAYERS.get(p.get("player_id"), {}).get("team"),
                 "is_mine": p.get("roster_id") == my_roster_id,
                 "is_keeper": bool(p.get("is_keeper")),
+                "salary": DSFF_SALARIES.get(p.get("player_id")) if league_id == DSFF_LEAGUE_ID else None,
             }
             for p in picks
         ]
