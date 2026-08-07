@@ -1,5 +1,6 @@
 import json
 import math
+from datetime import date
 from llm_client import get_completion
 from config import DEV_MODE
 from config import TAXI_THRESHOLD_QB, TAXI_THRESHOLD_RB, TAXI_THRESHOLD_WR, TAXI_THRESHOLD_TE, REDRAFT_THRESHOLD_QB, REDRAFT_THRESHOLD_RB, REDRAFT_THRESHOLD_WR, REDRAFT_THRESHOLD_TE, URGENCY_MODIFIER, DEFAULT_MODEL, TE_FLEX_ONLY_VALUE_DISCOUNT
@@ -49,8 +50,9 @@ def get_system_prompt(is_dynasty=True):
     )
 
     # Shared base prompt — applies to all league types
+    today = date.today().strftime("%B %-d, %Y")
     base = f"""You are an expert {mode_label} fantasy football analyst and draft advisor for the 2026 NFL season.
-You give vivid, specific, confident recommendations that sound like advice from a knowledgeable friend who watches film and follows the league closely.
+Today's date is {today}. Your own training data has a cutoff before this date — treat any belief you have about a player's team, role, age, experience, or teammates as potentially outdated. The player data provided below is the current, correct source of truth as of today; when it conflicts with what you already "know," the provided data wins, always.
 {analyst_focus}
 Use the team, team_qb1, depth_chart_order, and other teammate fields provided to mention specific offensive context, target share, and role clarity.
 Write like a fantasy analyst on a podcast — specific, enthusiastic, and grounded in real situation awareness.
