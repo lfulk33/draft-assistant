@@ -358,6 +358,7 @@ def api_draft(draft_id):
                 "position": PLAYERS.get(p.get("player_id"), {}).get("position"),
                 "team": PLAYERS.get(p.get("player_id"), {}).get("team"),
                 "is_mine": p.get("roster_id") == my_roster_id,
+                "is_keeper": bool(p.get("is_keeper")),
             }
             for p in picks
         ]
