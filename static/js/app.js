@@ -382,6 +382,15 @@ function renderRecommendation(rec) {
     }
   }
 
+  // POC: salary-cap leagues only — rec.salary is only present when the
+  // backend has salary_cap context for this league.
+  if (rec.salary != null) {
+    const salaryBadge = document.createElement('span');
+    salaryBadge.className = 'salary-badge';
+    salaryBadge.textContent = `$${rec.salary}`;
+    metaEl.appendChild(salaryBadge);
+  }
+
   // If the recommended player is also flagged as trade bait, badge the main
   // card instead of listing the same name again in Also Consider.
   // trade_bait isn't always an array in Claude's response — normalize first.
@@ -442,6 +451,7 @@ function renderAlternatives(alts, tradeBait) {
       <div class="alt-top">
         <span class="alt-name">${tb.name}</span>
         ${tb.position ? `<span class="alt-pos">${tb.position}</span>` : ''}
+        ${tb.salary != null ? `<span class="salary-badge">$${tb.salary}</span>` : ''}
         <span class="trade-bait-badge">${badgeLabel}</span>
       </div>
       <div class="alt-reason">${tb.reason || 'Best available at a full position — worth drafting to trade for a positional need.'}</div>
@@ -459,6 +469,7 @@ function renderAlternatives(alts, tradeBait) {
         <span class="alt-name">${alt.name}</span>
         ${alt.position ? `<span class="alt-pos">${alt.position}</span>` : ''}
         ${alt.team ? `<span class="alt-team">${alt.team}</span>` : ''}
+        ${alt.salary != null ? `<span class="salary-badge">$${alt.salary}</span>` : ''}
       </div>
       <div class="alt-reason">${alt.reason || ''}</div>
     `;
@@ -589,6 +600,36 @@ function renderNotes(rec) {
 
     needsItem.appendChild(grid);
     content.appendChild(needsItem);
+
+    // POC: salary-cap leagues only — lc.salary_cap is only present when
+    // the backend has salary_cap context for this league.
+    if (lc.salary_cap) {
+      const sc = lc.salary_cap;
+      const budgetItem = document.createElement('div');
+      budgetItem.className = 'note-item';
+      budgetItem.innerHTML = `
+        <div class="note-label">Budget</div>
+        <div class="needs-grid">
+          <div class="need-item">
+            <div class="need-pos">Spent</div>
+            <div class="need-val">$${sc.total_spent} / $${sc.cap}</div>
+          </div>
+          <div class="need-item">
+            <div class="need-pos">Remaining</div>
+            <div class="need-val ${sc.remaining_budget <= 0 ? 'needed' : 'filled'}">$${sc.remaining_budget}</div>
+          </div>
+          <div class="need-item">
+            <div class="need-pos">Slots left</div>
+            <div class="need-val">${sc.remaining_slots}</div>
+          </div>
+          <div class="need-item">
+            <div class="need-pos">Avg/slot</div>
+            <div class="need-val">$${sc.avg_per_slot}</div>
+          </div>
+        </div>
+      `;
+      content.appendChild(budgetItem);
+    }
   }
 }
 
