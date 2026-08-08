@@ -221,6 +221,20 @@ def _build_draft_state(draft_id, league_id, user_id):
     active_ids -= taxi_ids
     starter_ids = calculate_starter_ids(list(active_ids), PLAYERS, league_detail)
 
+    # A continuing dynasty league's annual draft isn't necessarily
+    # rookies-only just because it's dynasty + has a previous_league_id —
+    # some leagues re-inject cut veterans into the same pool (e.g. Alvin
+    # Kamara, Tyreek Hill showing up alongside true rookies). Pure-BPA mode
+    # is only correct when the pool really is rookies-only; otherwise it
+    # skips positional need/urgency entirely and just chases raw value.
+    # Detect real veteran talent in the pool as the tell — a true
+    # rookie-only draft has no such players available at all.
+    significant_veterans = sum(
+        1 for p in available.values()
+        if (p.get("years_exp") or 0) >= 1 and (p.get("fc_value") or 0) >= 500
+    )
+    has_veteran_talent = significant_veterans >= 3
+
     my_draft_slot = draft_detail.get("slot_to_roster_id", {})
     # Find which slot this user's roster occupies
     my_slot = next(
@@ -233,6 +247,8 @@ def _build_draft_state(draft_id, league_id, user_id):
         my_roster_id, PLAYERS, my_draft_picks, is_dynasty, starter_ids
     )
     league_context["my_draft_slot"] = my_slot
+    if has_veteran_talent:
+        league_context["is_rookie_draft"] = False
 
     # Identify taxi players using sim state so taxi badges show during draft
     if is_dynasty:
