@@ -1130,7 +1130,7 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
 
     return most_urgent_pos, urgency_scores
 
-def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None):
+def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None, blocked_positions=None):
     """
     Shared BPA decision scoring for both dynasty and redraft leagues.
 
@@ -1210,6 +1210,11 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
     # is for, not a MANDATORY override.
     def eligible_for_override(pos):
         if pos not in urgency_scores:
+            return False
+        if blocked_positions and pos in blocked_positions:
+            # e.g. a backup QB in a non-Superflex league before the FLEX
+            # slot is genuinely (not just numerically) filled — see
+            # calculate_bpa for the exact condition.
             return False
         if starter_needed_positions and pos not in starter_needed_positions:
             # Backup-tier position (its own starter slot already filled)
@@ -1754,15 +1759,98 @@ def calculate_bpa(available, league_context, all_players=None):
 
     has_superflex = league_context.get("has_superflex", False)
     ramped_modifier = URGENCY_MODIFIER * starter_fill_ramp
-    urgency_modifiers = {
-        "TE": ramped_modifier,
-        "QB": ramped_modifier if not has_superflex else URGENCY_MODIFIER,
-    }
+
+    # Relative starter strength: a backup-tier position (starter slot(s)
+    # already filled) shouldn't get full urgency to stack a 2nd good player
+    # just because one exists — not when some OTHER position's actual
+    # starter is much weaker. Hedging the weak spot is worth more than
+    # doubling up on a position that's already strong. Compare each filled
+    # position's weakest starter against the single weakest starter on the
+    # whole roster; a position already far ahead of that gets its backup
+    # urgency dampened toward 0, proportional to the gap. A position whose
+    # own starter already below replacement (or IS the weakest link) keeps
+    # full weight — hedging there is exactly right. This doesn't hard-block
+    # anything: a truly exceptional backup-tier player's raw VORP still
+    # comes through in the score even at modifier=0, so a value gap large
+    # enough to matter still wins.
+    # QB is excluded from this comparison entirely in non-Superflex leagues:
+    # a backup QB can't hedge a weak starting QB the way a bench RB/WR/TE
+    # can hedge a weak starter (you can't bench your only startable QB for
+    # a 2nd one). Its own eligibility stays governed by the flex-quality
+    # block below instead — never by "my QB is technically my weakest
+    # starter, so go get a 2nd one."
+    value_field = league_context.get("value_type", "dynasty_value")
+    positions_for_comparison = ["QB", "RB", "WR", "TE"] if has_superflex else ["RB", "WR", "TE"]
+    starter_vorp_by_position = {}
+    for pos in positions_for_comparison:
+        if picks_by_pos.get(pos, 0) < dedicated.get(pos, 0):
+            continue  # doesn't have all its starters yet, not part of this comparison
+        pos_players = sorted(
+            (p for p in sim_active.values() if p.get("position") == pos),
+            key=lambda p: p.get(value_field, 0) or 0,
+            reverse=True
+        )
+        starters = pos_players[:dedicated.get(pos, 0)]
+        if starters:
+            starter_vorp_by_position[pos] = min(
+                (s.get(value_field, 0) or 0) - replacement.get(pos, 0) for s in starters
+            )
+
+    weakest_overall_starter_vorp = min(starter_vorp_by_position.values()) if starter_vorp_by_position else 0
+
+    relative_strength_modifiers = {}
+    for pos, own_strength in starter_vorp_by_position.items():
+        if own_strength <= 0:
+            relative_strength_modifiers[pos] = URGENCY_MODIFIER
+        else:
+            ratio = max(0.0, weakest_overall_starter_vorp) / own_strength
+            relative_strength_modifiers[pos] = URGENCY_MODIFIER * min(1.0, ratio)
+
+    urgency_modifiers = dict(relative_strength_modifiers)
+    urgency_modifiers["TE"] = min(urgency_modifiers.get("TE", URGENCY_MODIFIER), ramped_modifier)
+    if not has_superflex:
+        # A backup QB's "urgency" isn't a real signal at all here — there's
+        # no genuine race for a 2nd unusable body the way there is for a
+        # FLEX-competitive bench spot. Its eligibility is governed entirely
+        # by the flex-quality block below; once eligible, it should win
+        # only on raw value, never get an urgency-driven boost on top.
+        urgency_modifiers["QB"] = 0
     if DEV_MODE:
-        print(f"  starter lineup filled: {filled_starters}/{total_starters} ({round(starter_fill_ramp,3)}), urgency_modifiers={urgency_modifiers} (full weight={URGENCY_MODIFIER})")
+        print(f"  starter lineup filled: {filled_starters}/{total_starters} ({round(starter_fill_ramp,3)})")
+        print(f"  starter_vorp_by_position: {({k: round(v) for k,v in starter_vorp_by_position.items()})}, weakest={round(weakest_overall_starter_vorp)}")
+        print(f"  urgency_modifiers={({k: round(v,3) for k,v in urgency_modifiers.items()})} (full weight={URGENCY_MODIFIER})")
+
+    # A backup QB in a non-Superflex league has almost no realistic path to
+    # ever being started — unlike a bench RB/WR/TE, which still has FLEX
+    # eligibility, bye-week, and injury-replacement value. Its VORP is real
+    # on paper but essentially never gets used. Block it from the override
+    # entirely until the FLEX slot is genuinely, not just numerically,
+    # filled — a surplus RB/WR/TE (beyond that position's own dedicated
+    # count) actually clearing replacement level, not just a warm body.
+    # Once that's true, a backup QB competes normally on value like anyone
+    # else (e.g. a real riser who keeps sliding can still win it).
+    blocked_positions = set()
+    has_flex_slot = sum(league_context.get("flex_slot_counts", {}).values()) > 0
+    if not has_superflex and has_flex_slot:
+        value_field = league_context.get("value_type", "dynasty_value")
+        flex_quality_filled = False
+        for pos in ["RB", "WR", "TE"]:
+            pos_players = sorted(
+                (p for p in sim_active.values() if p.get("position") == pos),
+                key=lambda p: p.get(value_field, 0) or 0,
+                reverse=True
+            )
+            surplus = pos_players[dedicated.get(pos, 0):]
+            if any((p.get(value_field, 0) or 0) - replacement.get(pos, 0) > 0 for p in surplus):
+                flex_quality_filled = True
+                break
+        if not flex_quality_filled:
+            blocked_positions.add("QB")
+        if DEV_MODE:
+            print(f"  flex_quality_filled={flex_quality_filled}, blocked_positions={blocked_positions}")
 
     bpa_player, suggested_pick, gap = _bpa_decision_v2(
-        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers
+        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers, blocked_positions
     )
 
     # Trade bait — only fires when the top player on the board is NOT the recommendation.
