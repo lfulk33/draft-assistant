@@ -1130,11 +1130,27 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
 
     return most_urgent_pos, urgency_scores
 
-def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None):
+def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None):
     """
     Shared BPA decision scoring for both dynasty and redraft leagues.
 
-    Scores every position's best-VORP player by vorp * urgency^URGENCY_MODIFIER.
+    Scores every position's best-VORP player by vorp * urgency^modifier,
+    where modifier comes from urgency_modifiers[pos] (falls back to
+    config.URGENCY_MODIFIER for any position not in that dict, or if no
+    dict is given at all).
+
+    The modifier is an exponent, not a multiplier on urgency itself — at
+    modifier=0, urgency**0 == 1 regardless of the actual urgency value, so
+    that position's score collapses to pure VORP with no scarcity
+    influence at all. calculate_bpa uses this to ramp TE (and QB in
+    single-QB, non-Superflex leagues) from 0 in round 1 up to full weight
+    by a later round: the opportunity-cost simulation urgency is built on
+    assumes other drafters pick in pure value order, but real humans reach
+    for RB/WR over a higher-value TE or 1-QB-league QB far more than that
+    simulation accounts for — and the cost of trusting it wrongly is
+    highest on the earliest, least-recoverable picks. RB/WR (and QB in
+    Superflex, where real drafters do take QBs early) aren't ramped —
+    only the positions with a real, known early-round bias are.
     Positive-VORP players are scored directly. Negative-VORP players are
     scored by dividing by urgency instead of multiplying, so higher urgency
     still makes a below-replacement pick relatively less bad (closer to
@@ -1167,15 +1183,21 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
     overall_urgency = urgency_scores.get(overall_pos, 1)
     needed_urgency = urgency_scores.get(needed_pos, 1)
 
-    def calc_score(vorp, urgency):
+    def modifier_for(pos):
+        if urgency_modifiers and pos in urgency_modifiers:
+            return urgency_modifiers[pos]
+        return URGENCY_MODIFIER
+
+    def calc_score(vorp, urgency, pos):
+        modifier = modifier_for(pos)
         if vorp >= 0:
-            return vorp * (urgency ** URGENCY_MODIFIER)
+            return vorp * (urgency ** modifier)
         else:
             safe_urgency = max(urgency, 0.01)
-            return vorp / (safe_urgency ** URGENCY_MODIFIER)
+            return vorp / (safe_urgency ** modifier)
 
-    overall_score = calc_score(best_overall["vorp"], overall_urgency)
-    needed_score = calc_score(best_needed["vorp"], needed_urgency)
+    overall_score = calc_score(best_overall["vorp"], overall_urgency, overall_pos)
+    needed_score = calc_score(best_needed["vorp"], needed_urgency, needed_pos)
 
     # Only positions with a real computed urgency (i.e. still actually
     # needed on this roster — present in urgency_scores) are eligible to
@@ -1207,7 +1229,7 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
     for pos, v in position_best.items():
         if not eligible_for_override(pos):
             continue
-        score = calc_score(v["vorp"], urgency_scores[pos])
+        score = calc_score(v["vorp"], urgency_scores[pos], pos)
         if score > best_score:
             best_score = score
             best_pos = pos
@@ -1218,20 +1240,21 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
             [(position_best[pos]["player"].get("full_name"), pos,
               round(position_best[pos]["vorp"]),
               round(urgency_scores.get(pos, 0)),
-              round(calc_score(position_best[pos]["vorp"], urgency_scores.get(pos, 0))),
+              round(calc_score(position_best[pos]["vorp"], urgency_scores.get(pos, 0), pos)),
               position_best[pos]["player"].get("fc_redraft_value", 0),
               position_best[pos].get("placement", "?"))
              for pos in position_best if pos in urgency_scores],
             key=lambda x: x[4], reverse=True
         )[:5]
         print(f"_bpa_decision_v2:")
+        print(f"  urgency_modifiers: {urgency_modifiers}")
         print(f"  top scores: {all_scores}")
         print(f"  best_needed: {best_needed['player'].get('full_name')} ({needed_pos}), vorp={round(best_needed['vorp'])}, urgency={round(needed_urgency)}, score={round(needed_score)}")
         print(f"  winner: {best_v['player'].get('full_name')} ({best_pos}), score={round(best_score)}")
         for pos, v in position_best.items():
             urgency = urgency_scores.get(pos, 1)
-            sc = calc_score(v["vorp"], urgency)
-            print(f"  position_best {pos}: {v['player'].get('full_name')}, vorp={round(v['vorp'])}, urgency={round(urgency)}, score={round(sc)}, placement={v.get('placement')}")
+            sc = calc_score(v["vorp"], urgency, pos)
+            print(f"  position_best {pos}: {v['player'].get('full_name')}, vorp={round(v['vorp'])}, urgency={round(urgency)}, score={round(sc)}, modifier={round(modifier_for(pos),3)}, placement={v.get('placement')}")
 
     if best_v["player"].get("full_name") != best_needed["player"].get("full_name"):
         gap = best_v["vorp"] - best_needed["vorp"]
@@ -1716,8 +1739,30 @@ def calculate_bpa(available, league_context, all_players=None):
         pos for pos in ["QB", "RB", "WR", "TE"]
         if picks_by_pos.get(pos, 0) < dedicated.get(pos, 0)
     }
+
+    # Ramp TE's (and, in single-QB leagues, QB's) urgency influence in from
+    # 0 up to full strength as the starting lineup actually fills up — see
+    # _bpa_decision_v2's docstring for why these two specifically. Tied to
+    # real roster progress (QB/RB/WR/TE dedicated slots only, never K/DEF)
+    # rather than a fixed round number, so it adapts to how this specific
+    # draft is actually going instead of an arbitrary universal cutoff.
+    total_starters = sum(dedicated.values())
+    filled_starters = sum(
+        min(picks_by_pos.get(pos, 0), dedicated.get(pos, 0)) for pos in dedicated
+    )
+    starter_fill_ramp = (filled_starters / total_starters) if total_starters else 1.0
+
+    has_superflex = league_context.get("has_superflex", False)
+    ramped_modifier = URGENCY_MODIFIER * starter_fill_ramp
+    urgency_modifiers = {
+        "TE": ramped_modifier,
+        "QB": ramped_modifier if not has_superflex else URGENCY_MODIFIER,
+    }
+    if DEV_MODE:
+        print(f"  starter lineup filled: {filled_starters}/{total_starters} ({round(starter_fill_ramp,3)}), urgency_modifiers={urgency_modifiers} (full weight={URGENCY_MODIFIER})")
+
     bpa_player, suggested_pick, gap = _bpa_decision_v2(
-        best_overall, best_needed, urgency_scores, viable, starter_needed_positions
+        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers
     )
 
     # Trade bait — only fires when the top player on the board is NOT the recommendation.
