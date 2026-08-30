@@ -22,9 +22,20 @@ from draft_advisor import (
     calculate_roster_needs, get_roster_recommendations
 )
 from salary_cap import load_salaries, load_keepers
+from fantasypros_client import load_fantasypros_redraft_values
 
 # Load players once at startup
 PLAYERS = {str(k): v for k, v in load_players().items()}
+
+# Redraft, full-PPR leagues use FantasyPros' overall rankings instead of
+# FantasyCalc's redraft_value — see _build_draft_state for the exact
+# qualification check (is_dynasty=False and scoring rec==1). Dynasty
+# leagues and anything not full-PPR are unaffected.
+FANTASYPROS_REDRAFT_VALUES, _fp_unmatched = load_fantasypros_redraft_values(
+    "FantasyPros_2026_Draft_ALL_Rankings.csv", PLAYERS
+)
+if _fp_unmatched:
+    print(f"[fantasypros_client] {len(_fp_unmatched)} entries unmatched (kickers/DEF expected)")
 
 # POC: salary-cap tracking, scoped to exactly one league. Not a general
 # feature yet — see project memory for the plan to generalize this later.
@@ -185,10 +196,24 @@ def _build_draft_state(draft_id, league_id, user_id):
     is_dynasty = league_detail.get("settings", {}).get("type") == 2
     rookie_draft = draft_detail.get("type") in ["rookie", "auction"]
 
+    # Redraft + full-PPR leagues run on FantasyPros rankings instead of
+    # FantasyCalc's redraft_value. Build a per-request override rather than
+    # mutating the shared PLAYERS dict, so dynasty leagues (which also read
+    # fc_redraft_value for taxi/redraft-proxy checks) are unaffected.
+    is_full_ppr = league_detail.get("scoring_settings", {}).get("rec") == 1
+    if not is_dynasty and is_full_ppr:
+        effective_players = {
+            pid: ({**p, "fc_redraft_value": FANTASYPROS_REDRAFT_VALUES[pid]}
+                  if pid in FANTASYPROS_REDRAFT_VALUES else p)
+            for pid, p in PLAYERS.items()
+        }
+    else:
+        effective_players = PLAYERS
+
     available = (
-        get_available_rookies(PLAYERS, picks)
+        get_available_rookies(effective_players, picks)
         if rookie_draft
-        else get_available_players(PLAYERS, picks)
+        else get_available_players(effective_players, picks)
     )
 
     # In a continuing dynasty/keeper league, every team's carried-over roster
@@ -244,7 +269,7 @@ def _build_draft_state(draft_id, league_id, user_id):
 
     league_context = build_league_context(
         league_detail, draft_detail, my_roster, picks,
-        my_roster_id, PLAYERS, my_draft_picks, is_dynasty, starter_ids
+        my_roster_id, effective_players, my_draft_picks, is_dynasty, starter_ids
     )
     league_context["my_draft_slot"] = my_slot
     if has_veteran_talent:
@@ -314,6 +339,7 @@ def _build_draft_state(draft_id, league_id, user_id):
         "my_draft_picks": my_draft_picks,
         "starter_ids": starter_ids,
         "league_context": league_context,
+        "all_players": effective_players,
     }
 
 
@@ -425,7 +451,7 @@ def api_recommend():
             state["my_roster"],
             state["league_context"],
             len(state["picks"]) + 1,
-            PLAYERS
+            state["all_players"]
         )
 
         # Verify recommended player is still available.
