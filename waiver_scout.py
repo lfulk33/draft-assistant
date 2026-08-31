@@ -28,8 +28,13 @@ def _get_all_rostered_ids(rosters):
     return {pid for r in rosters for pid in (r.get("players") or [])}
 
 
-def build_roster_summary(my_roster, players):
-    """My current roster, grouped by position, with real values."""
+def build_roster_summary(my_roster, players, league_detail=None):
+    """
+    My current roster, grouped by position, with real values, plus overall
+    capacity — total roster spots vs. how many are filled — so the model
+    knows whether an add needs a paired drop at all, or if there's a
+    genuinely open bench spot to fill for free.
+    """
     by_pos = {pos: [] for pos in SKILL_POSITIONS}
     for pid in my_roster.get("players") or []:
         p = players.get(pid, {})
@@ -46,7 +51,15 @@ def build_roster_summary(my_roster, players):
             "depth_chart_order": p.get("depth_chart_order"),
             "injury_status": p.get("injury_status"),
         })
-    return by_pos
+
+    total_spots = len(league_detail.get("roster_positions", [])) if league_detail else None
+    filled_spots = len(my_roster.get("players") or [])
+    return {
+        "roster_by_position": by_pos,
+        "total_roster_spots": total_spots,
+        "filled_roster_spots": filled_spots,
+        "open_roster_spots": (total_spots - filled_spots) if total_spots is not None else None,
+    }
 
 
 def build_available_summary(rosters, players, per_position=25):
@@ -103,13 +116,21 @@ MY CURRENT ROSTER:
 AVAILABLE (UNROSTERED) PLAYERS BY POSITION:
 {json.dumps(available_summary, indent=2)}
 
+My roster's "open_roster_spots" count above tells you whether I actually have a free bench spot right now. If it's 0 or negative, EVERY add below requires cutting someone — there is no such thing as "just add him" on a full roster. If it's positive, only that many adds can be free; anything beyond that count still needs a drop.
+
 Your job: identify a short list of real, worthwhile pickups from the available pool, each falling into one of these categories:
 1. IMMEDIATE UPGRADE — a player who should replace someone on my active roster right now, because he's a clear improvement at that spot.
 2. FUTURE VALUE STASH — someone worth adding now for what he might become, not for this week: a rookie who could see a bigger role soon, a player who's currently injured but will have real value once back, or a backup who could see a real opportunity if the starter ahead of him is dealing with something.
 
+For EVERY recommendation, you must say one of two things explicitly:
+- "Drop [specific current roster player] for him" — name the exact player from my roster you'd cut, and why this specific swap is a real upgrade (not just "this guy has positive value" — he has to be better than the specific guy he's replacing, or worth more than what an open bench spot could otherwise hold).
+- "Fits into an open bench spot, no drop needed" — only if open_roster_spots genuinely covers it.
+
+Never recommend an add without covering one of those two cases. If my roster is full and genuinely nobody on it is worth cutting for what's available, say so explicitly instead of forcing a recommendation.
+
 For each recommendation, name the specific real, current situation that makes him worth grabbing — not just his listed value. Skip anyone if the pool genuinely has nothing worthwhile at a position; don't force a recommendation.
 
-Keep the whole report brief — a manager should be able to read it in under a minute. For each position with a real recommendation, 1-3 sentences: name, category (upgrade or stash), and the concrete reason. Skip positions with nothing worth flagging. Do not restate the roster or the full player list back to me.
+Keep the whole report brief — a manager should be able to read it in under a minute. For each position with a real recommendation, 1-3 sentences: name, category (upgrade or stash), the drop/no-drop call, and the concrete reason. Skip positions with nothing worth flagging. Do not restate the roster or the full player list back to me.
 """
 
 

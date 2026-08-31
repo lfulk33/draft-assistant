@@ -499,7 +499,7 @@ def _generate_one_waiver_report(league_id, league_name, user_id):
         return {"league_id": league_id, "league_name": league_name, "error": "Roster not found for this user in this league."}
 
     is_dynasty = league_detail.get("settings", {}).get("type") == 2
-    roster_summary = waiver_scout.build_roster_summary(my_roster, PLAYERS)
+    roster_summary = waiver_scout.build_roster_summary(my_roster, PLAYERS, league_detail)
     available_summary = waiver_scout.build_available_summary(rosters, PLAYERS)
     report_text = waiver_scout.generate_waiver_report(league_name, is_dynasty, roster_summary, available_summary)
     return {"league_id": league_id, "league_name": league_name, "report": report_text}
