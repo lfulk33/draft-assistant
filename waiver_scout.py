@@ -62,7 +62,7 @@ def build_roster_summary(my_roster, players, league_detail=None):
     }
 
 
-def build_available_summary(rosters, players, per_position=25):
+def build_available_summary(rosters, players, per_position=15):
     """
     Unrostered players league-wide, grouped by position. Deliberately
     includes real bench-tier names (not just top-value players) — the
@@ -146,7 +146,16 @@ def generate_waiver_report(league_name, is_dynasty, roster_summary, available_su
         # tool-use content eats tokens before the actual report text starts,
         # even though the final report itself stays short per the prompt.
         max_tokens=6000,
-        tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
+        tools=[{
+            # _20260209+ runs search through code execution and filters
+            # results before they hit context ("dynamic filtering") — the
+            # unfiltered basic tool was loading full raw search-result text
+            # into context on every internal turn, which is what made a
+            # single report this expensive.
+            "type": "web_search_20260209",
+            "name": "web_search",
+            "max_uses": 5,
+        }],
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -157,7 +166,8 @@ def generate_waiver_report(league_name, is_dynasty, roster_summary, available_su
     # with its own citation attached) — join those directly with no
     # separator so sentences don't fracture mid-thought.
     last_tool_idx = max(
-        (i for i, b in enumerate(response.content) if b.type in ("server_tool_use", "web_search_tool_result")),
+        (i for i, b in enumerate(response.content)
+         if b.type in ("server_tool_use", "web_search_tool_result", "bash_code_execution_tool_result")),
         default=-1
     )
     text_blocks = [
