@@ -126,11 +126,13 @@ For EVERY recommendation, you must say one of two things explicitly:
 - "Drop [specific current roster player] for him" — name the exact player from my roster you'd cut, and why this specific swap is a real upgrade (not just "this guy has positive value" — he has to be better than the specific guy he's replacing, or worth more than what an open bench spot could otherwise hold).
 - "Fits into an open bench spot, no drop needed" — only if open_roster_spots genuinely covers it.
 
+When a drop is needed, don't stop at one name — list every current roster player who would ALSO be a reasonable drop for this same add, ranked in order from most obvious cut to least. Only include a name if cutting him for this add is genuinely defensible on its own; stop the list the moment the next candidate wouldn't actually be worth dropping. Most adds will only have one or two real candidates — a long list is a signal you've gone past who's actually worth cutting, not a target to hit. If truly only one player on my roster is worth cutting for this add, give just that one name; don't pad the list.
+
 Never recommend an add without covering one of those two cases. If my roster is full and genuinely nobody on it is worth cutting for what's available, say so explicitly instead of forcing a recommendation.
 
 For each recommendation, name the specific real, current situation that makes him worth grabbing — not just his listed value. Skip anyone if the pool genuinely has nothing worthwhile at a position; don't force a recommendation.
 
-Keep the whole report brief — a manager should be able to read it in under a minute. For each position with a real recommendation, 1-3 sentences: name, category (upgrade or stash), the drop/no-drop call, and the concrete reason. Skip positions with nothing worth flagging. Do not restate the roster or the full player list back to me.
+Keep the whole report brief — a manager should be able to read it in under a minute. For each position with a real recommendation, 1-3 sentences: name, category (upgrade or stash), the drop/no-drop call (as a ranked list of names when more than one is worth it, e.g. "Drop, in order of preference: X, then Y"), and the concrete reason. Skip positions with nothing worth flagging. Do not restate the roster or the full player list back to me.
 """
 
 
