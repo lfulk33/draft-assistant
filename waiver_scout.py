@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-REPORT_MODEL = "claude-sonnet-5"
+REPORT_MODEL = "claude-haiku-4-5-20251001"
 SKILL_POSITIONS = ("QB", "RB", "WR", "TE")
 
 
