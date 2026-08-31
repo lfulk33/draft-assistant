@@ -201,6 +201,127 @@ body {
   color: #f57f17;
 }
 
+/* Mode choice */
+.mode-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.btn-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 16px 18px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  background: var(--white);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.btn-mode:hover {
+  border-color: var(--accent);
+}
+
+.btn-mode:active {
+  background: var(--gray-50);
+}
+
+.btn-mode-title {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--black);
+}
+
+.btn-mode-sub {
+  font-size: 12px;
+  color: var(--gray-600);
+}
+
+/* League checklist (waiver report mode) */
+.league-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.league-checkbox-item input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.league-checkbox-item .league-name {
+  flex: 1;
+}
+
+#btn-run-waiver-report {
+  margin-top: 8px;
+}
+
+#btn-run-waiver-report:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Waiver report screen */
+.waivers-wrap {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px 80px;
+}
+
+.waivers-sub {
+  color: var(--gray-600);
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.waiver-league-card {
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  background: var(--white);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.waiver-league-card h2 {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  margin: 0 0 10px;
+}
+
+.waiver-league-card .report-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--gray-800);
+  white-space: pre-wrap;
+}
+
+.waiver-league-card .error-body {
+  font-size: 13px;
+  color: #c0392b;
+}
+
+.waivers-loading-note,
+.waivers-empty-note {
+  color: var(--gray-600);
+  font-size: 14px;
+  padding: 20px 0;
+}
+
 /* ── Draft Header ─────────────────────────────────────────────────────────── */
 .draft-header {
   display: flex;
