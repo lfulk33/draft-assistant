@@ -10,6 +10,8 @@ const state = {
   recommendationStale: false,
   draftFrozen: false,
   polling: null,
+  mode: null, // 'draft' | 'waiver'
+  checkedLeagueIds: new Set(),
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -50,40 +52,144 @@ function confidenceText(tier, gap) {
 }
 
 // ── Setup Screen ─────────────────────────────────────────────────────────────
-$('btn-load-leagues').addEventListener('click', loadLeagues);
+function showModeChoice() {
+  const username = $('input-username').value.trim();
+  if (!username) return;
+  localStorage.setItem('da_username', username);
+  hide('setup-error');
+  hide('league-list');
+  hide('league-checklist-wrap');
+  show('mode-choice');
+}
+
+$('btn-continue').addEventListener('click', showModeChoice);
 $('input-username').addEventListener('keydown', e => {
-  if (e.key === 'Enter') loadLeagues();
+  if (e.key === 'Enter') showModeChoice();
 });
+
+$('btn-mode-draft').addEventListener('click', () => enterMode('draft'));
+$('btn-mode-waiver').addEventListener('click', () => enterMode('waiver'));
+
+async function enterMode(mode) {
+  state.mode = mode;
+  const btn = mode === 'draft' ? $('btn-mode-draft') : $('btn-mode-waiver');
+  const originalHtml = btn.innerHTML;
+  btn.innerHTML = '<span class="btn-mode-title">Loading leagues...</span>';
+  hide('setup-error');
+
+  try {
+    await loadLeagues();
+    hide('mode-choice');
+    if (mode === 'draft') {
+      renderLeagueList(state.leagues);
+      show('league-list');
+      hide('league-checklist-wrap');
+    } else {
+      state.checkedLeagueIds = new Set();
+      renderLeagueChecklist(state.leagues);
+      show('league-checklist-wrap');
+      hide('league-list');
+    }
+  } catch (err) {
+    $('setup-error').textContent = err.message || 'Failed to load leagues.';
+    show('setup-error');
+  } finally {
+    btn.innerHTML = originalHtml;
+  }
+}
 
 async function loadLeagues() {
   const username = $('input-username').value.trim();
   if (!username) return;
 
-  $('btn-load-leagues').textContent = 'Loading...';
-  $('btn-load-leagues').disabled = true;
-  hide('setup-error');
-  hide('league-list');
+  const res = await fetch(`/api/leagues?username=${encodeURIComponent(username)}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+
+  state.username = username;
+  state.userId = data[0]?.user_id || '';
+  state.leagues = data;
+}
+
+function renderLeagueChecklist(leagues) {
+  const wrap = $('league-checklist');
+  wrap.innerHTML = '';
+
+  const sorted = [...leagues].sort((a, b) => a.league_name.localeCompare(b.league_name));
+  sorted.forEach(league => {
+    const item = document.createElement('label');
+    item.className = 'league-checkbox-item';
+    item.innerHTML = `
+      <input type="checkbox" data-league-id="${league.league_id}">
+      <span class="league-name">${league.league_name}</span>
+    `;
+    const checkbox = item.querySelector('input');
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) state.checkedLeagueIds.add(league.league_id);
+      else state.checkedLeagueIds.delete(league.league_id);
+      $('btn-run-waiver-report').disabled = state.checkedLeagueIds.size === 0;
+    });
+    wrap.appendChild(item);
+  });
+
+  $('btn-run-waiver-report').disabled = true;
+}
+
+$('btn-run-waiver-report').addEventListener('click', runWaiverReport);
+
+async function runWaiverReport() {
+  const leagueIds = [...state.checkedLeagueIds];
+  if (!leagueIds.length) return;
+
+  showScreen('waiver');
+  const sub = $('waivers-sub');
+  const content = $('waivers-content');
+  sub.textContent = 'Running…';
+  content.innerHTML = '<div class="waivers-loading-note">Scouting waivers across selected leagues — running live web research per league, this can take a minute or two…</div>';
 
   try {
-    const res = await fetch(`/api/leagues?username=${encodeURIComponent(username)}`);
+    const params = new URLSearchParams({
+      username: state.username,
+      league_ids: leagueIds.join(','),
+    });
+    const res = await fetch(`/api/waiver-report?${params}`);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to generate report.');
 
-    if (data.error) throw new Error(data.error);
-
-    state.username = username;
-    state.userId = data[0]?.user_id || '';
-    state.leagues = data;
-
-    renderLeagueList(data);
-    show('league-list');
+    sub.textContent = 'Generated ' + new Date(data.generated_at).toLocaleString();
+    renderWaiverReports(data.reports || []);
   } catch (err) {
-    $('setup-error').textContent = err.message || 'Failed to load leagues.';
-    show('setup-error');
-  } finally {
-    $('btn-load-leagues').textContent = 'Load Leagues';
-    $('btn-load-leagues').disabled = false;
+    content.innerHTML = `<div class="waivers-empty-note">Error: ${err.message}</div>`;
   }
 }
+
+function renderWaiverReports(reports) {
+  const content = $('waivers-content');
+  content.innerHTML = '';
+  if (!reports.length) {
+    content.innerHTML = '<div class="waivers-empty-note">No leagues returned.</div>';
+    return;
+  }
+  reports.forEach(r => {
+    const card = document.createElement('div');
+    card.className = 'waiver-league-card';
+    if (r.error) {
+      card.innerHTML = `<h2>${r.league_name}</h2><div class="error-body">${r.error}</div>`;
+    } else {
+      card.innerHTML = `<h2>${r.league_name}</h2><div class="report-body"></div>`;
+      card.querySelector('.report-body').textContent = r.report;
+    }
+    content.appendChild(card);
+  });
+}
+
+$('btn-waiver-back').addEventListener('click', () => {
+  state.mode = null;
+  showScreen('setup');
+  hide('mode-choice');
+  hide('league-list');
+  hide('league-checklist-wrap');
+});
 
 function renderLeagueList(leagues) {
   const list = $('league-list');
@@ -125,7 +231,11 @@ $('btn-change-league').addEventListener('click', () => {
   stopPolling();
   state.recommendation = null;
   state.draftFrozen = false;
+  state.mode = null;
   showScreen('setup');
+  hide('mode-choice');
+  hide('league-list');
+  hide('league-checklist-wrap');
 });
 
 $('btn-recommend').addEventListener('click', getRecommendation);
@@ -693,7 +803,3 @@ if (savedUsername) {
     .then(d => { if (d.username) $('input-username').value = d.username; })
     .catch(() => { });
 }
-
-$('btn-load-leagues').addEventListener('click', () => {
-  localStorage.setItem('da_username', $('input-username').value.trim());
-});

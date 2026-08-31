@@ -38,17 +38,6 @@ FANTASYPROS_REDRAFT_VALUES, _fp_unmatched = load_fantasypros_redraft_values(
 if _fp_unmatched:
     print(f"[fantasypros_client] {len(_fp_unmatched)} entries unmatched (kickers/DEF expected)")
 
-# Leagues covered by the waiver-wire report (drafts are over — this is
-# in-season roster management, not draft-time recommendations).
-WAIVER_REPORT_LEAGUES = {
-    "1312162869869031424": "Dark Side GM",
-    "1312159679626870784": "D.O.A.",
-    "1313599751106609152": "Dark Side Sleeper Keeper",
-    "1312068664308019200": "Dark Side Dynasty",
-    "1389377048937517056": "You’re Either First or Last",
-    "1312646372024930304": "Contest of Champions",
-}
-
 # POC: salary-cap tracking, scoped to exactly one league. Not a general
 # feature yet — see project memory for the plan to generalize this later.
 DSFF_LEAGUE_ID = "1312162869869031424"
@@ -490,9 +479,10 @@ def api_recommend():
         return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 
-def _generate_one_waiver_report(league_id, league_name, user_id):
+def _generate_one_waiver_report(league_id, user_id):
     import sleeper_league as sl
     league_detail = sl.get_league(league_id)
+    league_name = league_detail.get("name", league_id)
     rosters = get_rosters(league_id)
     my_roster = next((r for r in rosters if r.get("owner_id") == user_id), None)
     if not my_roster:
@@ -508,9 +498,9 @@ def _generate_one_waiver_report(league_id, league_name, user_id):
 @app.route("/api/waiver-report")
 def api_waiver_report():
     """
-    Runs the waiver-wire scouting report across every league in
-    WAIVER_REPORT_LEAGUES for the given user, in parallel (each involves
-    several web searches, so this can take a while run sequentially).
+    Runs the waiver-wire scouting report across whichever leagues the user
+    checked on the setup screen, in parallel (each involves several real
+    web searches, so this can take a while run sequentially).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -522,26 +512,25 @@ def api_waiver_report():
         return jsonify({"error": f"Sleeper user '{username}' not found."}), 404
     user_id = user["user_id"]
 
+    league_ids = [lid for lid in request.args.get("league_ids", "").split(",") if lid]
+    if not league_ids:
+        return jsonify({"error": "No leagues selected."}), 400
+
     results = []
-    with ThreadPoolExecutor(max_workers=len(WAIVER_REPORT_LEAGUES)) as executor:
+    with ThreadPoolExecutor(max_workers=len(league_ids)) as executor:
         futures = {
-            executor.submit(_generate_one_waiver_report, lid, name, user_id): lid
-            for lid, name in WAIVER_REPORT_LEAGUES.items()
+            executor.submit(_generate_one_waiver_report, lid, user_id): lid
+            for lid in league_ids
         }
         for future in as_completed(futures):
+            lid = futures[future]
             try:
                 results.append(future.result())
             except Exception as e:
-                results.append({"league_id": futures[future], "league_name": WAIVER_REPORT_LEAGUES[futures[future]], "error": str(e)})
+                results.append({"league_id": lid, "league_name": lid, "error": str(e)})
 
-    order = list(WAIVER_REPORT_LEAGUES.keys())
-    results.sort(key=lambda r: order.index(r["league_id"]))
+    results.sort(key=lambda r: league_ids.index(r["league_id"]))
     return jsonify({"generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z", "reports": results})
-
-
-@app.route("/waivers")
-def waivers_page():
-    return send_from_directory("templates", "waivers.html")
 
 
 if __name__ == "__main__":

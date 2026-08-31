@@ -27,10 +27,42 @@
           <input type="text" id="input-username" class="field-input" placeholder="your username" autocomplete="off"
             autocapitalize="off">
         </div>
-        <button id="btn-load-leagues" class="btn-primary">Load Leagues</button>
+        <button id="btn-continue" class="btn-primary">Continue</button>
         <div id="setup-error" class="error-msg hidden"></div>
       </div>
+
+      <div id="mode-choice" class="mode-choice hidden">
+        <button id="btn-mode-draft" class="btn-mode">
+          <span class="btn-mode-title">Draft Assistant</span>
+          <span class="btn-mode-sub">Live pick recommendations during a draft</span>
+        </button>
+        <button id="btn-mode-waiver" class="btn-mode">
+          <span class="btn-mode-title">Waiver Report</span>
+          <span class="btn-mode-sub">Scout the waiver wire across your leagues</span>
+        </button>
+      </div>
+
       <div id="league-list" class="league-list hidden"></div>
+
+      <div id="league-checklist-wrap" class="league-list hidden">
+        <div id="league-checklist"></div>
+        <button id="btn-run-waiver-report" class="btn-primary" disabled>Run Report</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- WAIVER REPORT SCREEN -->
+  <div id="screen-waiver" class="screen hidden">
+    <header class="draft-header">
+      <div class="header-left">
+        <h1 class="logo">Draft Assistant</h1>
+        <span class="header-league">Waiver Report</span>
+      </div>
+      <button id="btn-waiver-back" class="btn-ghost">Change</button>
+    </header>
+    <div class="waivers-wrap">
+      <div class="waivers-sub" id="waivers-sub">Not run yet.</div>
+      <div id="waivers-content"></div>
     </div>
   </div>
 
