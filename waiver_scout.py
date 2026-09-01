@@ -130,9 +130,13 @@ When a drop is needed, don't stop at one name — list every current roster play
 
 Never recommend an add without covering one of those two cases. If my roster is full and genuinely nobody on it is worth cutting for what's available, say so explicitly instead of forcing a recommendation.
 
-For each recommendation, name the specific real, current situation that makes him worth grabbing — not just his listed value. Skip anyone if the pool genuinely has nothing worthwhile at a position; don't force a recommendation.
+Only recommend a player if the specific real, current situation behind him (not just his listed value) actually clears the bar. Skip a position entirely if the pool has nothing worthwhile there — don't force a recommendation.
 
-Keep the whole report brief — a manager should be able to read it in under a minute. For each position with a real recommendation, 1-3 sentences: name, category (upgrade or stash), the drop/no-drop call (as a ranked list of names when more than one is worth it, e.g. "Drop, in order of preference: X, then Y"), and the concrete reason. Skip positions with nothing worth flagging. Do not restate the roster or the full player list back to me.
+OUTPUT FORMAT — this is a scannable list I'll read in ten seconds, not a document that has to convince me on its own. I'll dig deeper myself on anything that catches my eye, so skip the persuasive paragraph:
+- Exactly one line per recommendation, this shape: `POS — Player (Team): UPGRADE|STASH. Drop: Name[, Name2, ...]|none (open spot). <reason, 12 words max>`
+- The reason is a punchy fragment, not a sentence — name the concrete trigger (e.g. "WR1 after Hill/Waddle exits", "ankle sprain, direct backup unrostered") and stop. No throat-clearing, no hedging, no "worth monitoring."
+- No opening context/date paragraph, no closing summary, no restating my roster or the pool back to me. Just the lines.
+- If literally nothing is worth grabbing, output exactly: `Nothing worth grabbing right now.`
 """
 
 
