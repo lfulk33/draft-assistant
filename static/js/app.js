@@ -623,6 +623,8 @@ function renderRawRecommendation(rec) {
       ['VORP', d.vorp],
       ['Positional rank', `${d.position}${d.positional_rank}`],
       ['Replacement level', d.replacement_level],
+      ['Urgency', d.urgency],
+      ['Score (VORP × urgency^mod)', d.score],
     ];
     if (rec.gap != null) rows.push(['Gap vs. best overall', rec.gap]);
     rows.forEach(([label, val]) => {
@@ -660,10 +662,13 @@ function renderRawAlternatives(byPosition, pickedName) {
     group.innerHTML = `<div class="raw-pos-head">${pos}</div>`;
     entries.forEach(e => {
       const row = document.createElement('div');
-      row.className = 'raw-alt-row' + (e.name === pickedName ? ' is-pick' : '');
+      row.className = 'raw-alt-row' + (e.name === pickedName ? ' is-pick' : '') + (e.eligible_for_pick === false ? ' is-blocked' : '');
       row.innerHTML = `
-        <span class="raw-alt-name">${e.positional_rank}. ${e.name}${e.team ? ` (${e.team})` : ''}</span>
-        <span class="raw-alt-nums">VORP ${e.vorp} · val ${e.value}</span>
+        <div class="raw-alt-row-main">
+          <span class="raw-alt-name">${e.positional_rank}. ${e.name}${e.team ? ` (${e.team})` : ''}</span>
+          <span class="raw-alt-nums">score ${e.score} · VORP ${e.vorp} · urg ${e.urgency} · val ${e.value}</span>
+        </div>
+        ${e.eligible_for_pick === false ? `<div class="raw-alt-blocked-note">Can't win the pick: ${e.not_eligible_reason}</div>` : ''}
       `;
       group.appendChild(row);
     });
