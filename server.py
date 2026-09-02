@@ -24,6 +24,7 @@ from draft_advisor import (
 from salary_cap import load_salaries, load_keepers
 from fantasypros_client import load_fantasypros_redraft_values
 import waiver_scout
+import chopped_bid_advisor
 
 # Load players once at startup
 PLAYERS = {str(k): v for k, v in load_players().items()}
@@ -520,6 +521,60 @@ def api_waiver_report():
     with ThreadPoolExecutor(max_workers=len(league_ids)) as executor:
         futures = {
             executor.submit(_generate_one_waiver_report, lid, user_id): lid
+            for lid in league_ids
+        }
+        for future in as_completed(futures):
+            lid = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as e:
+                results.append({"league_id": lid, "league_name": lid, "error": str(e)})
+
+    results.sort(key=lambda r: league_ids.index(r["league_id"]))
+    return jsonify({"generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z", "reports": results})
+
+
+def _generate_one_bid_report(league_id, user_id):
+    import sleeper_league as sl
+    league_detail = sl.get_league(league_id)
+    league_name = league_detail.get("name", league_id)
+    rosters = get_rosters(league_id)
+    my_roster = next((r for r in rosters if r.get("owner_id") == user_id), None)
+    if not my_roster:
+        return {"league_id": league_id, "league_name": league_name, "error": "Roster not found for this user in this league."}
+
+    roster_summary = waiver_scout.build_roster_summary(my_roster, PLAYERS, league_detail)
+    available_summary = waiver_scout.build_available_summary(rosters, PLAYERS)
+    budget_summary = chopped_bid_advisor.build_budget_summary(my_roster, league_detail)
+    report_text = chopped_bid_advisor.generate_bid_report(league_name, roster_summary, available_summary, budget_summary)
+    return {"league_id": league_id, "league_name": league_name, "budget": budget_summary, "report": report_text}
+
+
+@app.route("/api/chopped-bid-report")
+def api_chopped_bid_report():
+    """
+    Runs the weekly Chopped-league bid-strategy report across whichever
+    leagues the user checked, in parallel (each involves several real web
+    searches, so this can take a while run sequentially).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    username = request.args.get("username", SLEEPER_USERNAME)
+    if not username:
+        return jsonify({"error": "No username provided."}), 400
+    user = get_user(username)
+    if not user:
+        return jsonify({"error": f"Sleeper user '{username}' not found."}), 404
+    user_id = user["user_id"]
+
+    league_ids = [lid for lid in request.args.get("league_ids", "").split(",") if lid]
+    if not league_ids:
+        return jsonify({"error": "No leagues selected."}), 400
+
+    results = []
+    with ThreadPoolExecutor(max_workers=len(league_ids)) as executor:
+        futures = {
+            executor.submit(_generate_one_bid_report, lid, user_id): lid
             for lid in league_ids
         }
         for future in as_completed(futures):

@@ -67,12 +67,34 @@ $('input-username').addEventListener('keydown', e => {
   if (e.key === 'Enter') showModeChoice();
 });
 
+// Config for the checkbox-league-list report modes (everything except
+// 'draft', which uses the click-to-select single-league flow instead).
+const REPORT_MODES = {
+  waiver: {
+    screen: 'waiver',
+    endpoint: '/api/waiver-report',
+    subId: 'waivers-sub',
+    contentId: 'waivers-content',
+    loadingText: 'Scouting waivers across selected leagues — running live web research per league, this can take a minute or two…',
+  },
+  chopped: {
+    screen: 'chopped',
+    endpoint: '/api/chopped-bid-report',
+    subId: 'chopped-sub',
+    contentId: 'chopped-content',
+    loadingText: "Building this week's bid strategy across selected leagues — running live web research per league, this can take a minute or two…",
+  },
+};
+
+const MODE_BUTTON_IDS = { draft: 'btn-mode-draft', waiver: 'btn-mode-waiver', chopped: 'btn-mode-chopped' };
+
 $('btn-mode-draft').addEventListener('click', () => enterMode('draft'));
 $('btn-mode-waiver').addEventListener('click', () => enterMode('waiver'));
+$('btn-mode-chopped').addEventListener('click', () => enterMode('chopped'));
 
 async function enterMode(mode) {
   state.mode = mode;
-  const btn = mode === 'draft' ? $('btn-mode-draft') : $('btn-mode-waiver');
+  const btn = $(MODE_BUTTON_IDS[mode]);
   const originalHtml = btn.innerHTML;
   btn.innerHTML = '<span class="btn-mode-title">Loading leagues...</span>';
   hide('setup-error');
@@ -135,36 +157,37 @@ function renderLeagueChecklist(leagues) {
   $('btn-run-waiver-report').disabled = true;
 }
 
-$('btn-run-waiver-report').addEventListener('click', runWaiverReport);
+$('btn-run-waiver-report').addEventListener('click', () => runReport(state.mode));
 
-async function runWaiverReport() {
+async function runReport(mode) {
+  const cfg = REPORT_MODES[mode];
   const leagueIds = [...state.checkedLeagueIds];
-  if (!leagueIds.length) return;
+  if (!cfg || !leagueIds.length) return;
 
-  showScreen('waiver');
-  const sub = $('waivers-sub');
-  const content = $('waivers-content');
+  showScreen(cfg.screen);
+  const sub = $(cfg.subId);
+  const content = $(cfg.contentId);
   sub.textContent = 'Running…';
-  content.innerHTML = '<div class="waivers-loading-note">Scouting waivers across selected leagues — running live web research per league, this can take a minute or two…</div>';
+  content.innerHTML = `<div class="waivers-loading-note">${cfg.loadingText}</div>`;
 
   try {
     const params = new URLSearchParams({
       username: state.username,
       league_ids: leagueIds.join(','),
     });
-    const res = await fetch(`/api/waiver-report?${params}`);
+    const res = await fetch(`${cfg.endpoint}?${params}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed to generate report.');
 
     sub.textContent = 'Generated ' + new Date(data.generated_at).toLocaleString();
-    renderWaiverReports(data.reports || []);
+    renderReportCards(data.reports || [], cfg.contentId);
   } catch (err) {
     content.innerHTML = `<div class="waivers-empty-note">Error: ${err.message}</div>`;
   }
 }
 
-function renderWaiverReports(reports) {
-  const content = $('waivers-content');
+function renderReportCards(reports, contentId) {
+  const content = $(contentId);
   content.innerHTML = '';
   if (!reports.length) {
     content.innerHTML = '<div class="waivers-empty-note">No leagues returned.</div>';
@@ -175,21 +198,30 @@ function renderWaiverReports(reports) {
     card.className = 'waiver-league-card';
     if (r.error) {
       card.innerHTML = `<h2>${r.league_name}</h2><div class="error-body">${r.error}</div>`;
-    } else {
-      card.innerHTML = `<h2>${r.league_name}</h2><div class="report-body"></div>`;
-      card.querySelector('.report-body').textContent = r.report;
+      content.appendChild(card);
+      return;
     }
+    let budgetHtml = '';
+    if (r.budget) {
+      const b = r.budget;
+      budgetHtml = `<div class="budget-line">Budget: $${b.remaining_budget} left of $${b.total_season_budget} · ~$${b.even_pace_baseline_per_week}/wk to make it through week ${b.last_elimination_week}</div>`;
+    }
+    card.innerHTML = `<h2>${r.league_name}</h2>${budgetHtml}<div class="report-body"></div>`;
+    card.querySelector('.report-body').textContent = r.report;
     content.appendChild(card);
   });
 }
 
-$('btn-waiver-back').addEventListener('click', () => {
+function backToSetup() {
   state.mode = null;
   showScreen('setup');
   hide('mode-choice');
   hide('league-list');
   hide('league-checklist-wrap');
-});
+}
+
+$('btn-waiver-back').addEventListener('click', backToSetup);
+$('btn-chopped-back').addEventListener('click', backToSetup);
 
 function renderLeagueList(leagues) {
   const list = $('league-list');
