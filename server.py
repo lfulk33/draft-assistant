@@ -18,7 +18,7 @@ from sleeper_draft import (
     get_available_rookies, get_available_players, count_my_picks
 )
 from draft_advisor import (
-    get_recommendation, calculate_starter_ids,
+    get_recommendation, get_recommendation_raw, calculate_starter_ids,
     calculate_roster_needs, get_roster_recommendations
 )
 from salary_cap import load_salaries, load_keepers
@@ -456,25 +456,38 @@ def api_draft(draft_id):
 @app.route("/api/recommend", methods=["POST"])
 def api_recommend():
     """
-    Fetches fresh draft state from Sleeper and returns a Claude-generated
-    pick recommendation. Always re-fetches picks to avoid stale data.
+    Fetches fresh draft state from Sleeper and returns a pick
+    recommendation. Always re-fetches picks to avoid stale data.
+
+    use_claude (default true): when false, skips the Claude call entirely
+    and returns the deterministic algorithm's numbers directly — VORP,
+    value, positional rank, replacement level for the pick and the top
+    alternatives at every position — no narrative text, no LLM cost.
     """
     try:
         data = request.json
         draft_id = data["draft_id"]
         league_id = data["league_id"]
         user_id = data["user_id"]
+        use_claude = data.get("use_claude", True)
 
         state = _build_draft_state(draft_id, league_id, user_id)
 
-        rec = get_recommendation(
-            state["picks"],
-            state["available"],
-            state["my_roster"],
-            state["league_context"],
-            len(state["picks"]) + 1,
-            state["all_players"]
-        )
+        if use_claude:
+            rec = get_recommendation(
+                state["picks"],
+                state["available"],
+                state["my_roster"],
+                state["league_context"],
+                len(state["picks"]) + 1,
+                state["all_players"]
+            )
+        else:
+            rec = get_recommendation_raw(
+                state["available"],
+                state["league_context"],
+                state["all_players"]
+            )
 
         # Verify recommended player is still available.
         # Fetch picks fresh from Sleeper right now — not the cached picks from

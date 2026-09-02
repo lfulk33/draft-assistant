@@ -1883,6 +1883,68 @@ def calculate_bpa(available, league_context, all_players=None):
 
     return bpa_player, suggested_pick, gap, trade_bait_players
 
+
+def get_recommendation_raw(available, league_context, all_players=None):
+    """
+    The same underlying pick as get_recommendation(), but with no Claude
+    call at all — no narrative reasoning/positional_note/upside, just the
+    deterministic numbers behind the decision: VORP, current value,
+    positional rank, and replacement level for the recommended player and
+    the top alternatives at every position. For a "Claude Advice" toggle
+    aimed at players who don't want to pay for flavor text and just want
+    the raw math.
+
+    Deliberately calls calculate_bpa() and calculate_vorp() independently
+    rather than threading extra return values through calculate_bpa's
+    already-verified internals — a little redundant computation, zero risk
+    of changing what calculate_bpa actually decides.
+    """
+    bpa_player, suggested_pick, gap, trade_bait_players = calculate_bpa(available, league_context, all_players)
+    final_pick = bpa_player or suggested_pick
+
+    vorp_players, replacement, _, _ = calculate_vorp(available, league_context, all_players)
+
+    def _entry(v):
+        pos = v["position"]
+        return {
+            "name": v["player"].get("full_name"),
+            "position": pos,
+            "team": v["player"].get("team"),
+            "value": round(v["value"], 2),
+            "vorp": round(v["vorp"], 2),
+            "replacement_level": round(replacement.get(pos, 0), 2),
+        }
+
+    by_position = {"QB": [], "RB": [], "WR": [], "TE": []}
+    for v in vorp_players:
+        if v["position"] in by_position:
+            by_position[v["position"]].append(_entry(v))
+    # vorp_players is already sorted by VORP desc, so each position's list
+    # is too — positional rank is just its 1-indexed position in that list.
+    for entries in by_position.values():
+        for i, e in enumerate(entries, start=1):
+            e["positional_rank"] = i
+
+    recommended = None
+    if final_pick:
+        pos = final_pick.get("position")
+        recommended = next(
+            (e for e in by_position.get(pos, []) if e["name"] == final_pick.get("full_name")),
+            None
+        )
+
+    return {
+        "recommendation": final_pick.get("full_name") if final_pick else None,
+        "position": final_pick.get("position") if final_pick else None,
+        "recommended_details": recommended,
+        "gap": round(gap, 2) if gap is not None else None,
+        "alternatives_by_position": {pos: entries[:5] for pos, entries in by_position.items()},
+        "trade_bait": [
+            {"name": tb["name"], "position": tb["position"]} for tb in (trade_bait_players or [])
+        ],
+    }
+
+
 def calculate_confidence(recommendation_name, available, alternatives, is_dynasty=True):
     if is_dynasty:
         ranked = sorted(

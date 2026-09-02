@@ -442,8 +442,10 @@ async function getRecommendation() {
   state.recommendation = null;
   state.recommendationStale = false;
 
+  const useClaude = $('toggle-use-claude').checked;
+
   $('btn-recommend').disabled = true;
-  $('btn-recommend-text').textContent = 'Thinking...';
+  $('btn-recommend-text').textContent = useClaude ? 'Thinking...' : 'Calculating...';
   show('btn-recommend-spinner');
 
   hide('rec-empty');
@@ -470,6 +472,7 @@ async function getRecommendation() {
         draft_id: selectedDraftId,
         league_id: selectedLeague.league_id,
         user_id: userId,
+        use_claude: useClaude,
       }),
     });
 
@@ -486,6 +489,7 @@ async function getRecommendation() {
           draft_id: selectedDraftId,
           league_id: selectedLeague.league_id,
           user_id: userId,
+          use_claude: useClaude,
         }),
       });
       const retryRec = await retryRes.json();
@@ -513,6 +517,13 @@ async function getRecommendation() {
 }
 
 function renderRecommendation(rec) {
+  // Raw (no-Claude) mode has a completely different response shape —
+  // alternatives_by_position instead of prose alternatives/reasoning.
+  if (rec.alternatives_by_position) {
+    renderRawRecommendation(rec);
+    return;
+  }
+
   $('rec-player').textContent = rec.recommendation || '—';
 
   const metaEl = $('rec-meta');
@@ -578,6 +589,89 @@ function renderRecommendation(rec) {
   show('rec-content');
 
   activateTab('alternatives');
+}
+
+function renderRawRecommendation(rec) {
+  $('rec-player').textContent = rec.recommendation || '—';
+
+  const metaEl = $('rec-meta');
+  metaEl.innerHTML = '';
+  if (rec.position) {
+    const badge = document.createElement('span');
+    badge.className = 'pos-badge';
+    badge.textContent = rec.position;
+    metaEl.appendChild(badge);
+  }
+  if (rec.recommended_details?.team) {
+    const team = document.createElement('span');
+    team.className = 'rec-team';
+    team.textContent = rec.recommended_details.team;
+    metaEl.appendChild(team);
+  }
+
+  // No Claude confidence tier in raw mode — hide that bar entirely.
+  document.querySelector('.rec-conf').style.visibility = 'hidden';
+
+  const reasoningEl = $('rec-reasoning');
+  reasoningEl.innerHTML = '';
+  const d = rec.recommended_details;
+  if (d) {
+    const grid = document.createElement('div');
+    grid.className = 'raw-rec-numbers';
+    const rows = [
+      ['Value', d.value],
+      ['VORP', d.vorp],
+      ['Positional rank', `${d.position}${d.positional_rank}`],
+      ['Replacement level', d.replacement_level],
+    ];
+    if (rec.gap != null) rows.push(['Gap vs. best overall', rec.gap]);
+    rows.forEach(([label, val]) => {
+      const row = document.createElement('div');
+      row.className = 'stat-row';
+      row.innerHTML = `<span>${label}</span><span>${val}</span>`;
+      grid.appendChild(row);
+    });
+    reasoningEl.appendChild(grid);
+  }
+
+  hide('rec-prompt');
+  hide('new-pick-banner');
+  document.querySelector('.rec-label').style.visibility = 'visible';
+  $('rec-player').style.visibility = 'visible';
+  $('rec-meta').style.visibility = 'visible';
+  $('rec-reasoning').style.visibility = 'visible';
+
+  renderRawAlternatives(rec.alternatives_by_position || {}, rec.recommendation);
+  renderRoster();
+  renderNotes({});
+
+  show('rec-content');
+  activateTab('alternatives');
+}
+
+function renderRawAlternatives(byPosition, pickedName) {
+  const list = $('alts-list');
+  list.innerHTML = '';
+  ['QB', 'RB', 'WR', 'TE'].forEach(pos => {
+    const entries = byPosition[pos];
+    if (!entries || !entries.length) return;
+    const group = document.createElement('div');
+    group.className = 'raw-pos-group';
+    group.innerHTML = `<div class="raw-pos-head">${pos}</div>`;
+    entries.forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'raw-alt-row' + (e.name === pickedName ? ' is-pick' : '');
+      row.innerHTML = `
+        <span class="raw-alt-name">${e.positional_rank}. ${e.name}${e.team ? ` (${e.team})` : ''}</span>
+        <span class="raw-alt-nums">VORP ${e.vorp} · val ${e.value}</span>
+      `;
+      group.appendChild(row);
+    });
+    list.appendChild(group);
+  });
+  if (!list.children.length) {
+    list.innerHTML = '<p class="alts-empty">No alternatives data.</p>';
+  }
 }
 
 function getPlayerTeamFromAvailable(name, draftData) {
