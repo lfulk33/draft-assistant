@@ -623,6 +623,7 @@ function renderRawRecommendation(rec) {
       ['VORP', d.vorp],
       ['Positional rank', `${d.position}${d.positional_rank}`],
       ['Replacement level', d.replacement_level],
+      ['Real ADP', d.adp_formatted ? `pick ${d.adp_formatted} (${d.adp})` : 'no ADP data'],
       ['Opportunity cost (board risk)', d.opportunity_cost],
       ['Roster need', d.roster_need],
       ['Final score', d.score],
@@ -666,7 +667,7 @@ function renderRawAlternatives(byPosition, pickedName) {
       row.className = 'raw-alt-row' + (e.name === pickedName ? ' is-pick' : '') + (e.eligible_for_pick === false ? ' is-blocked' : '');
       row.innerHTML = `
         <div class="raw-alt-row-main">
-          <span class="raw-alt-name">${e.positional_rank}. ${e.name}${e.team ? ` (${e.team})` : ''}</span>
+          <span class="raw-alt-name">${e.positional_rank}. ${e.name}${e.team ? ` (${e.team})` : ''}${e.adp_formatted ? ` <span class="raw-alt-adp">ADP ${e.adp_formatted}</span>` : ''}</span>
           <span class="raw-alt-nums">score ${e.score} · VORP ${e.vorp} · opp ${e.opportunity_cost} · need ${e.roster_need} · val ${e.value}</span>
         </div>
         ${e.eligible_for_pick === false ? `<div class="raw-alt-blocked-note">Can't win the pick: ${e.not_eligible_reason}</div>` : ''}

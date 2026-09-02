@@ -1044,6 +1044,12 @@ body {
   flex: 1;
 }
 
+.raw-alt-adp {
+  font-size: 11px;
+  color: var(--gray-400);
+  font-weight: 400;
+}
+
 .raw-alt-nums {
   color: var(--gray-600);
   font-size: 12px;

@@ -8,6 +8,7 @@ venv/
 players.json
 fantasy_players.json
 season_stats_*.json
+adp_*.json
 
 # Environment
 .env

@@ -1,6 +1,7 @@
 import json
 import math
 from datetime import date
+import adp_client
 from llm_client import get_completion
 from config import DEV_MODE
 from config import TAXI_THRESHOLD_QB, TAXI_THRESHOLD_RB, TAXI_THRESHOLD_WR, TAXI_THRESHOLD_TE, REDRAFT_THRESHOLD_QB, REDRAFT_THRESHOLD_RB, REDRAFT_THRESHOLD_WR, REDRAFT_THRESHOLD_TE, URGENCY_MODIFIER, DEFAULT_MODEL, TE_FLEX_ONLY_VALUE_DISCOUNT, SALARY_COMFORTABLE_PER_SLOT
@@ -394,7 +395,7 @@ def build_prompt(picks, available, my_roster, league_context, pick_number, all_p
         status = "FILLED — do not draft another here unless the value is truly exceptional" if remaining == 0 else f"NEEDS {remaining} MORE"
         roster_needs_summary[pos] = f"{have}/{total_need} ({status})"
 
-    bpa_player, suggested_pick, bpa_gap, trade_bait_players, _, _, _, _, _ = calculate_bpa(available, league_context, all_players)
+    bpa_player, suggested_pick, bpa_gap, trade_bait_players, _, _, _, _, _, _ = calculate_bpa(available, league_context, all_players)
     final_pick = bpa_player or suggested_pick
     if DEV_MODE:
         print(f"bpa_player: {bpa_player.get('full_name') if bpa_player else None}")
@@ -918,7 +919,7 @@ def _has_active_redraft_viable(pos, viable_active):
         for v in viable_active
     )
 
-def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None, sim_active=None, replacement=None):
+def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None, sim_active=None, replacement=None, adp_map=None):
     """
     Calculate how urgently each position needs to be addressed THIS pick.
 
@@ -1038,9 +1039,23 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         best = next((v for v in viable_active if v["position"] == pos), None)
         best_now[pos] = best["vorp"] if best else 0
 
-    # Simulate N picks happening (top N players by VORP get drafted)
-    # Use N = num_teams as approximation of picks until your next turn
-    top_n_players = [v["player"].get("full_name") for v in viable_active[:picks_until_next]]
+    # Simulate N picks happening before your next turn. Prefer real ADP
+    # order over VORP order when available — VORP-order assumes every
+    # drafter picks in pure value order, which is exactly the false
+    # assumption that made a hand-tuned modifier necessary in the first
+    # place (real drafters wait on TE/backup QB well past their VORP
+    # rank). Real ADP bakes that behavior in directly. Falls back to VORP
+    # order for any player ADP has no data for (deep bench players who
+    # were never going to be "drafted next" regardless), or entirely if
+    # no ADP data could be fetched for this league at all.
+    if adp_map:
+        def _adp_sort_key(v):
+            entry = adp_map.get(v["player"].get("player_id"))
+            return entry["adp"] if entry else 9999
+        viable_by_adp = sorted(viable_active, key=_adp_sort_key)
+        top_n_players = [v["player"].get("full_name") for v in viable_by_adp[:picks_until_next]]
+    else:
+        top_n_players = [v["player"].get("full_name") for v in viable_active[:picks_until_next]]
     viable_after = [v for v in viable_active if v["player"].get("full_name") not in top_n_players]
 
     # Get best available ACTIVE player at each position after N picks
@@ -1691,11 +1706,11 @@ def calculate_bpa(available, league_context, all_players=None):
     vorp_players, replacement, drafted_count, dedicated_cutoff = calculate_vorp(available, league_context, all_players)
     
     if not vorp_players:
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None
 
     vorp_players = _apply_salary_adjustment(vorp_players, league_context)
     if not vorp_players:
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None
 
     # Step 2: Build simulated roster state from all picks made so far
     all_picks = (
@@ -1722,8 +1737,8 @@ def calculate_bpa(available, league_context, all_players=None):
     if not viable:
         if vorp_players:
             best = max(vorp_players, key=lambda x: x["vorp"])
-            return None, best["player"], 0, None, None, None, None, None, None
-        return None, None, None, None, None, None, None, None, None
+            return None, best["player"], 0, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None
 
     # Rookie drafts are about accumulating the best assets, not filling
     # this instant's roster construction — positional need/capacity gating
@@ -1734,7 +1749,7 @@ def calculate_bpa(available, league_context, all_players=None):
     if league_context.get("is_rookie_draft"):
         if DEV_MODE:
             print(f"  is_rookie_draft: pure BPA — {viable[0]['player'].get('full_name')}")
-        return None, viable[0]["player"], 0, [], None, None, None, None, None
+        return None, viable[0]["player"], 0, [], None, None, None, None, None, None
 
     # Step 4: Count meaningful players at each position
     picks_by_pos = _count_picks_by_pos(sim_active, league_context)
@@ -1743,8 +1758,20 @@ def calculate_bpa(available, league_context, all_players=None):
     if DEV_MODE:
         print(f"  drafted_count before urgency: {drafted_count}")
         print(f"  dedicated_cutoff before urgency: {dedicated_cutoff}")
+
+    # Real ADP for the "who gets drafted next" simulation — falls back to
+    # None (VORP-order simulation) on any fetch/match failure rather than
+    # ever blocking a recommendation on an external API call succeeding.
+    adp_map = None
+    if all_players:
+        try:
+            adp_map = adp_client.build_adp_map(league_context, all_players, date.today().year)
+        except Exception as e:
+            if DEV_MODE:
+                print(f"  adp_client.build_adp_map failed, falling back to VORP-order simulation: {e}")
+
     most_needed_pos, urgency_scores, need_scores = _calculate_urgency(
-        viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi, sim_active, replacement
+        viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi, sim_active, replacement, adp_map
     )
 
     # Step 6: Find the two key candidates
@@ -1802,7 +1829,7 @@ def calculate_bpa(available, league_context, all_players=None):
         )
         if DEV_MODE:
             print(f"  no urgency scores — taking best needed dynasty value: {best_fallback['player'].get('full_name') if best_fallback else None}")
-        return None, best_fallback["player"] if best_fallback else None, 0, trade_bait_players, urgency_scores, None, None, None, need_scores
+        return None, best_fallback["player"] if best_fallback else None, 0, trade_bait_players, urgency_scores, None, None, None, need_scores, adp_map
 
     # Step 7: BPA decision (identical scoring for dynasty and redraft)
     # A genuinely open FLEX/SUPER_FLEX slot is a real starter opportunity,
@@ -1943,7 +1970,7 @@ def calculate_bpa(available, league_context, all_players=None):
             print(f"  trade_bait: {top_player['player'].get('full_name')} ({top_player['position']}) — top player not recommended")
 
 
-    return bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions, need_scores
+    return bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions, need_scores, adp_map
 
 
 def get_recommendation_raw(available, league_context, all_players=None):
@@ -1965,7 +1992,7 @@ def get_recommendation_raw(available, league_context, all_players=None):
     (rather than recomputed) so the exposed score is exactly what the real
     decision used, not a re-derived approximation of it.
     """
-    bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions, need_scores = calculate_bpa(
+    bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions, need_scores, adp_map = calculate_bpa(
         available, league_context, all_players
     )
     final_pick = bpa_player or suggested_pick
@@ -1973,6 +2000,7 @@ def get_recommendation_raw(available, league_context, all_players=None):
     starter_needed_positions = starter_needed_positions or set()
     blocked_positions = blocked_positions or set()
     need_scores = need_scores or {}
+    adp_map = adp_map or {}
 
     vorp_players, replacement, _, _ = calculate_vorp(available, league_context, all_players)
 
@@ -1990,6 +2018,7 @@ def get_recommendation_raw(available, league_context, all_players=None):
         opportunity_cost = urgency_scores.get(pos, 0)
         need = need_scores.get(pos, 0)
         blocked_reason = _override_blocked_reason(pos)
+        adp_entry = adp_map.get(v["player"].get("player_id"))
         return {
             "name": v["player"].get("full_name"),
             "position": pos,
@@ -2002,6 +2031,8 @@ def get_recommendation_raw(available, league_context, all_players=None):
             "score": round(_calc_score(v["vorp"], opportunity_cost, need, pos, urgency_modifiers), 2),
             "eligible_for_pick": blocked_reason is None,
             "not_eligible_reason": blocked_reason,
+            "adp": adp_entry["adp"] if adp_entry else None,
+            "adp_formatted": adp_entry["adp_formatted"] if adp_entry else None,
         }
 
     by_position = {"QB": [], "RB": [], "WR": [], "TE": []}
