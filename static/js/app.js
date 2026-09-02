@@ -623,8 +623,9 @@ function renderRawRecommendation(rec) {
       ['VORP', d.vorp],
       ['Positional rank', `${d.position}${d.positional_rank}`],
       ['Replacement level', d.replacement_level],
-      ['Urgency', d.urgency],
-      ['Score (VORP × urgency^mod)', d.score],
+      ['Opportunity cost (board risk)', d.opportunity_cost],
+      ['Roster need', d.roster_need],
+      ['Final score', d.score],
     ];
     if (rec.gap != null) rows.push(['Gap vs. best overall', rec.gap]);
     rows.forEach(([label, val]) => {
@@ -666,7 +667,7 @@ function renderRawAlternatives(byPosition, pickedName) {
       row.innerHTML = `
         <div class="raw-alt-row-main">
           <span class="raw-alt-name">${e.positional_rank}. ${e.name}${e.team ? ` (${e.team})` : ''}</span>
-          <span class="raw-alt-nums">score ${e.score} · VORP ${e.vorp} · urg ${e.urgency} · val ${e.value}</span>
+          <span class="raw-alt-nums">score ${e.score} · VORP ${e.vorp} · opp ${e.opportunity_cost} · need ${e.roster_need} · val ${e.value}</span>
         </div>
         ${e.eligible_for_pick === false ? `<div class="raw-alt-blocked-note">Can't win the pick: ${e.not_eligible_reason}</div>` : ''}
       `;

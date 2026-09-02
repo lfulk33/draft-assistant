@@ -394,7 +394,7 @@ def build_prompt(picks, available, my_roster, league_context, pick_number, all_p
         status = "FILLED — do not draft another here unless the value is truly exceptional" if remaining == 0 else f"NEEDS {remaining} MORE"
         roster_needs_summary[pos] = f"{have}/{total_need} ({status})"
 
-    bpa_player, suggested_pick, bpa_gap, trade_bait_players, _, _, _, _ = calculate_bpa(available, league_context, all_players)
+    bpa_player, suggested_pick, bpa_gap, trade_bait_players, _, _, _, _, _ = calculate_bpa(available, league_context, all_players)
     final_pick = bpa_player or suggested_pick
     if DEV_MODE:
         print(f"bpa_player: {bpa_player.get('full_name') if bpa_player else None}")
@@ -1017,8 +1017,8 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
     ]
 
     if not needed_positions:
-        return None, {}
-        
+        return None, {}, {}
+
     # Split viable into active-bound and taxi-bound players.
     # Only use active-bound players for urgency — taxi stashes don't fill
     # active roster needs and recommending them creates an infinite loop.
@@ -1050,6 +1050,7 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         best_after[pos] = best["vorp"] if best else 0
 
     urgency_scores = {}
+    need_scores = {}
     for pos in needed_positions:
         # Opportunity cost: value lost by waiting.
         # Can be negative if best_now is already below replacement —
@@ -1085,8 +1086,12 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         positive_vorp_players = len([v for v in viable_active if v["position"] == pos and v["vorp"] > 0])
 
         if all_players_at_pos == 0:
-            # No players left at this position at all
-            scarcity_ratio = float('inf')
+            # No players left at this position at all. A large finite
+            # sentinel rather than float('inf') — infinity survives Python
+            # arithmetic fine but isn't valid JSON, and get_recommendation_raw
+            # serializes these numbers directly to the frontend. This still
+            # sorts as "maximally urgent" against any real scarcity ratio.
+            scarcity_ratio = 1000.0
         elif positive_vorp_players == 0:
             # Only negative VORP players remain — use all players for scarcity
             scarcity_ratio = slots_needed / all_players_at_pos
@@ -1121,18 +1126,26 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         if DEV_MODE:
             print(f"  {pos}: dedicated_filled={dedicated_filled} (quality_ok={dedicated_quality_ok}), picks={picks_by_pos.get(pos,0)}, dedicated={dedicated_slots_needed}, backup_mult={backup_multiplier}")
 
-        # opportunity_cost == 0 with scarcity_ratio == inf (no active-bound
-        # players left at all) is a real 0 * inf case — NaN otherwise.
-        # No urgency to speak of if there's no value gap to begin with.
-        urgency_scores[pos] = 0 if opportunity_cost == 0 else opportunity_cost * (1 + scarcity_ratio) * backup_multiplier
+        # Two independent signals, kept separate rather than blended into
+        # one number: opportunity_cost is board-risk (will someone else
+        # take the best option here before your next turn?), need_scores is
+        # roster need (how badly is this position still unfilled?). Blending
+        # them into one urgency figure meant the TE/backup-QB early-round
+        # dampening (applied via urgency_modifiers, meant to correct for
+        # over-trusting opportunity-cost math early) silently dampened real
+        # roster need too, even in round 1 with a position still at zero —
+        # need should never be dampened by round, only board-risk should.
+        # See _calc_score for how these recombine.
+        urgency_scores[pos] = opportunity_cost
+        need_scores[pos] = scarcity_ratio * backup_multiplier
 
         if DEV_MODE:
-            print(f"  {pos}: opp_cost={round(opportunity_cost)}, scarcity={round(scarcity_ratio,3)}, backup_mult={backup_multiplier}, urgency={round(urgency_scores[pos])}, slots_needed={round(slots_needed,2)}, flex_demand={round(flex_demand,2)}, pos_vorp_players={positive_vorp_players}")
+            print(f"  {pos}: opp_cost={round(opportunity_cost)}, scarcity={round(scarcity_ratio,3)}, backup_mult={backup_multiplier}, need={round(need_scores[pos],3)}, slots_needed={round(slots_needed,2)}, flex_demand={round(flex_demand,2)}, pos_vorp_players={positive_vorp_players}")
 
     if not urgency_scores:
-        return None, {}
+        return None, {}, {}
 
-    most_urgent_pos = max(urgency_scores, key=lambda p: urgency_scores[p])
+    most_urgent_pos = max(urgency_scores, key=lambda p: urgency_scores[p] * (1 + need_scores.get(p, 0)))
 
     if DEV_MODE:
         print(f"_calculate_urgency:")
@@ -1140,9 +1153,10 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         print(f"  needed_positions: {needed_positions}")
         print(f"  picks_by_pos: {picks_by_pos}")
         print(f"  urgency_scores: {urgency_scores}")
+        print(f"  need_scores: {need_scores}")
         print(f"  most_urgent_pos: {most_urgent_pos}")
 
-    return most_urgent_pos, urgency_scores
+    return most_urgent_pos, urgency_scores, need_scores
 
 def _modifier_for(pos, urgency_modifiers):
     if urgency_modifiers and pos in urgency_modifiers:
@@ -1150,36 +1164,48 @@ def _modifier_for(pos, urgency_modifiers):
     return URGENCY_MODIFIER
 
 
-def _calc_score(vorp, urgency, pos, urgency_modifiers):
+def _calc_score(vorp, opportunity_cost, need, pos, urgency_modifiers):
     """
-    score = vorp * (1 + urgency)^modifier (or vorp / (1 + urgency)^modifier
-    when vorp is negative — see _bpa_decision_v2's docstring for the full
-    rationale on the positive/negative split). Module-level so
-    get_recommendation_raw can expose the exact same score the real
-    decision is actually based on, not a re-derived approximation of it.
+    score = vorp * (1 + opportunity_cost)^modifier * (1 + need)
+    (or vorp / [...] when vorp is negative — see _bpa_decision_v2's
+    docstring for the full rationale on the positive/negative split).
+    Module-level so get_recommendation_raw can expose the exact same score
+    the real decision is actually based on, not a re-derived approximation.
 
-    Using (1 + urgency) rather than a bare urgency^modifier is deliberate:
-    urgency legitimately hits exactly 0 whenever the opportunity-cost
-    simulation finds that waiting costs nothing (e.g. the current best
-    player at a position will obviously still be there after however many
-    picks happen before your next turn — routine with an accurate, often
-    small picks_until_next). A bare urgency^modifier would multiply the
-    score to a flat zero in that case regardless of VORP, discarding a
-    perfectly good player's entire value just because there's no
-    time-pressure to grab him *this instant* — verified live: a WR with
-    VORP 128 scored exactly 0 this way. (1 + urgency) guarantees the
-    score gracefully falls back to plain VORP at urgency=0 (matching how
-    modifier=0 already falls back to plain VORP), and still scales up
-    correctly as urgency rises above 0. This also removes the need for the
-    old safe_urgency floor in the negative branch, since 1+urgency is
-    always >= 1 and can't produce a division blowup.
+    opportunity_cost and need are two deliberately independent signals,
+    not blended into one "urgency" figure:
+      - opportunity_cost: board risk — will someone else take the best
+        option here before your next turn?
+      - need: roster need — how badly is this position still unfilled,
+        scaled down for backup-only slots?
+    The early-round dampening (`modifier`, e.g. TE/backup-QB ramping in
+    from 0) applies ONLY to opportunity_cost, not to need. That dampening
+    exists to correct for real drafters not trusting opportunity-cost math
+    early (they don't reach for TE/QB in round 1 even when the math says
+    to) — it was never meant to say "ignore how badly you need this
+    position in round 1 too." Blending them into one number that gets
+    dampened together silently suppressed real, current roster need
+    whenever it happened to coincide with an early round — need should
+    always count at full strength, regardless of round.
+
+    Using (1 + x) rather than a bare x^modifier for both factors is
+    deliberate: opportunity_cost legitimately hits exactly 0 whenever the
+    simulation finds waiting costs nothing (routine with an accurate,
+    often-small picks_until_next), and a bare x^modifier would multiply
+    the score to a flat zero in that case regardless of VORP — verified
+    live: a WR with VORP 128 scored exactly 0 this way. (1 + x) guarantees
+    graceful fallback to plain VORP when a factor is 0 (matching how
+    modifier=0 already falls back to plain VORP), while still scaling up
+    correctly as either factor rises. This also removes the need for the
+    old safe_urgency floor in the negative branch, since 1+x is always
+    >= 1 and can't produce a division blowup.
     """
     modifier = _modifier_for(pos, urgency_modifiers)
-    scaled_urgency = (1 + urgency) ** modifier
+    combined = ((1 + opportunity_cost) ** modifier) * (1 + need)
     if vorp >= 0:
-        return vorp * scaled_urgency
+        return vorp * combined
     else:
-        return vorp / scaled_urgency
+        return vorp / combined
 
 
 def _eligible_for_override(pos, urgency_scores, starter_needed_positions, blocked_positions):
@@ -1211,32 +1237,22 @@ def _eligible_for_override(pos, urgency_scores, starter_needed_positions, blocke
     return True
 
 
-def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None, blocked_positions=None):
+def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None, blocked_positions=None, need_scores=None):
     """
     Shared BPA decision scoring for both dynasty and redraft leagues.
 
-    Scores every position's best-VORP player by vorp * urgency^modifier,
-    where modifier comes from urgency_modifiers[pos] (falls back to
-    config.URGENCY_MODIFIER for any position not in that dict, or if no
-    dict is given at all).
+    Scores every position's best-VORP player via _calc_score: vorp times
+    two independent factors — opportunity_cost (board risk, dampened by
+    modifier in early rounds for TE/backup-QB) and need (roster need,
+    never dampened by round). See _calc_score's docstring for the full
+    rationale on why these are kept separate rather than blended, and for
+    modifier's exact role.
 
-    The modifier is an exponent, not a multiplier on urgency itself — at
-    modifier=0, urgency**0 == 1 regardless of the actual urgency value, so
-    that position's score collapses to pure VORP with no scarcity
-    influence at all. calculate_bpa uses this to ramp TE (and QB in
-    single-QB, non-Superflex leagues) from 0 in round 1 up to full weight
-    by a later round: the opportunity-cost simulation urgency is built on
-    assumes other drafters pick in pure value order, but real humans reach
-    for RB/WR over a higher-value TE or 1-QB-league QB far more than that
-    simulation accounts for — and the cost of trusting it wrongly is
-    highest on the earliest, least-recoverable picks. RB/WR (and QB in
-    Superflex, where real drafters do take QBs early) aren't ramped —
-    only the positions with a real, known early-round bias are.
     Positive-VORP players are scored directly. Negative-VORP players are
-    scored by dividing by urgency instead of multiplying, so higher urgency
-    still makes a below-replacement pick relatively less bad (closer to
-    zero) without ever letting it cross into positive territory and beat
-    a real positive-VORP player — a negative score can never outscore a
+    scored by dividing instead of multiplying, so a stronger signal still
+    makes a below-replacement pick relatively less bad (closer to zero)
+    without ever letting it cross into positive territory and beat a real
+    positive-VORP player — a negative score can never outscore a
     non-negative one.
 
     starter_needed_positions: set of positions whose dedicated starter
@@ -1252,6 +1268,8 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
     if not best_needed:
         return None, best_overall["player"], 0
 
+    need_scores = need_scores or {}
+
     position_best = {}
     if viable:
         for v in viable:
@@ -1261,11 +1279,13 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
 
     overall_pos = best_overall["position"]
     needed_pos = best_needed["position"]
-    overall_urgency = urgency_scores.get(overall_pos, 1)
-    needed_urgency = urgency_scores.get(needed_pos, 1)
+    overall_urgency = urgency_scores.get(overall_pos, 0)
+    needed_urgency = urgency_scores.get(needed_pos, 0)
+    overall_need = need_scores.get(overall_pos, 0)
+    needed_need = need_scores.get(needed_pos, 0)
 
-    overall_score = _calc_score(best_overall["vorp"], overall_urgency, overall_pos, urgency_modifiers)
-    needed_score = _calc_score(best_needed["vorp"], needed_urgency, needed_pos, urgency_modifiers)
+    overall_score = _calc_score(best_overall["vorp"], overall_urgency, overall_need, overall_pos, urgency_modifiers)
+    needed_score = _calc_score(best_needed["vorp"], needed_urgency, needed_need, needed_pos, urgency_modifiers)
 
     best_pos = needed_pos
     best_score = needed_score
@@ -1277,7 +1297,7 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
     for pos, v in position_best.items():
         if not _eligible_for_override(pos, urgency_scores, starter_needed_positions, blocked_positions):
             continue
-        score = _calc_score(v["vorp"], urgency_scores[pos], pos, urgency_modifiers)
+        score = _calc_score(v["vorp"], urgency_scores[pos], need_scores.get(pos, 0), pos, urgency_modifiers)
         if score > best_score:
             best_score = score
             best_pos = pos
@@ -1288,21 +1308,23 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
             [(position_best[pos]["player"].get("full_name"), pos,
               round(position_best[pos]["vorp"]),
               round(urgency_scores.get(pos, 0)),
-              round(_calc_score(position_best[pos]["vorp"], urgency_scores.get(pos, 0), pos, urgency_modifiers)),
+              round(need_scores.get(pos, 0), 2),
+              round(_calc_score(position_best[pos]["vorp"], urgency_scores.get(pos, 0), need_scores.get(pos, 0), pos, urgency_modifiers)),
               position_best[pos]["player"].get("fc_redraft_value", 0),
               position_best[pos].get("placement", "?"))
              for pos in position_best if pos in urgency_scores],
-            key=lambda x: x[4], reverse=True
+            key=lambda x: x[5], reverse=True
         )[:5]
         print(f"_bpa_decision_v2:")
         print(f"  urgency_modifiers: {urgency_modifiers}")
-        print(f"  top scores: {all_scores}")
-        print(f"  best_needed: {best_needed['player'].get('full_name')} ({needed_pos}), vorp={round(best_needed['vorp'])}, urgency={round(needed_urgency)}, score={round(needed_score)}")
+        print(f"  top scores (name, pos, vorp, opp_cost, need, score, value, placement): {all_scores}")
+        print(f"  best_needed: {best_needed['player'].get('full_name')} ({needed_pos}), vorp={round(best_needed['vorp'])}, opp_cost={round(needed_urgency)}, need={round(needed_need,2)}, score={round(needed_score)}")
         print(f"  winner: {best_v['player'].get('full_name')} ({best_pos}), score={round(best_score)}")
         for pos, v in position_best.items():
-            urgency = urgency_scores.get(pos, 1)
-            sc = _calc_score(v["vorp"], urgency, pos, urgency_modifiers)
-            print(f"  position_best {pos}: {v['player'].get('full_name')}, vorp={round(v['vorp'])}, urgency={round(urgency)}, score={round(sc)}, modifier={round(_modifier_for(pos, urgency_modifiers),3)}, placement={v.get('placement')}")
+            opp_cost = urgency_scores.get(pos, 0)
+            need = need_scores.get(pos, 0)
+            sc = _calc_score(v["vorp"], opp_cost, need, pos, urgency_modifiers)
+            print(f"  position_best {pos}: {v['player'].get('full_name')}, vorp={round(v['vorp'])}, opp_cost={round(opp_cost)}, need={round(need,2)}, score={round(sc)}, modifier={round(_modifier_for(pos, urgency_modifiers),3)}, placement={v.get('placement')}")
 
     if best_v["player"].get("full_name") != best_needed["player"].get("full_name"):
         gap = best_v["vorp"] - best_needed["vorp"]
@@ -1669,11 +1691,11 @@ def calculate_bpa(available, league_context, all_players=None):
     vorp_players, replacement, drafted_count, dedicated_cutoff = calculate_vorp(available, league_context, all_players)
     
     if not vorp_players:
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     vorp_players = _apply_salary_adjustment(vorp_players, league_context)
     if not vorp_players:
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     # Step 2: Build simulated roster state from all picks made so far
     all_picks = (
@@ -1700,8 +1722,8 @@ def calculate_bpa(available, league_context, all_players=None):
     if not viable:
         if vorp_players:
             best = max(vorp_players, key=lambda x: x["vorp"])
-            return None, best["player"], 0, None, None, None, None, None
-        return None, None, None, None, None, None, None, None
+            return None, best["player"], 0, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     # Rookie drafts are about accumulating the best assets, not filling
     # this instant's roster construction — positional need/capacity gating
@@ -1712,7 +1734,7 @@ def calculate_bpa(available, league_context, all_players=None):
     if league_context.get("is_rookie_draft"):
         if DEV_MODE:
             print(f"  is_rookie_draft: pure BPA — {viable[0]['player'].get('full_name')}")
-        return None, viable[0]["player"], 0, [], None, None, None, None
+        return None, viable[0]["player"], 0, [], None, None, None, None, None
 
     # Step 4: Count meaningful players at each position
     picks_by_pos = _count_picks_by_pos(sim_active, league_context)
@@ -1721,7 +1743,7 @@ def calculate_bpa(available, league_context, all_players=None):
     if DEV_MODE:
         print(f"  drafted_count before urgency: {drafted_count}")
         print(f"  dedicated_cutoff before urgency: {dedicated_cutoff}")
-    most_needed_pos, urgency_scores = _calculate_urgency(
+    most_needed_pos, urgency_scores, need_scores = _calculate_urgency(
         viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi, sim_active, replacement
     )
 
@@ -1780,7 +1802,7 @@ def calculate_bpa(available, league_context, all_players=None):
         )
         if DEV_MODE:
             print(f"  no urgency scores — taking best needed dynasty value: {best_fallback['player'].get('full_name') if best_fallback else None}")
-        return None, best_fallback["player"] if best_fallback else None, 0, trade_bait_players, urgency_scores, None, None, None
+        return None, best_fallback["player"] if best_fallback else None, 0, trade_bait_players, urgency_scores, None, None, None, need_scores
 
     # Step 7: BPA decision (identical scoring for dynasty and redraft)
     # A genuinely open FLEX/SUPER_FLEX slot is a real starter opportunity,
@@ -1904,7 +1926,7 @@ def calculate_bpa(available, league_context, all_players=None):
             print(f"  flex_quality_filled={flex_quality_filled}, blocked_positions={blocked_positions}")
 
     bpa_player, suggested_pick, gap = _bpa_decision_v2(
-        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers, blocked_positions
+        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers, blocked_positions, need_scores
     )
 
     # Trade bait — only fires when the top player on the board is NOT the recommendation.
@@ -1921,7 +1943,7 @@ def calculate_bpa(available, league_context, all_players=None):
             print(f"  trade_bait: {top_player['player'].get('full_name')} ({top_player['position']}) — top player not recommended")
 
 
-    return bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions
+    return bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions, need_scores
 
 
 def get_recommendation_raw(available, league_context, all_players=None):
@@ -1943,13 +1965,14 @@ def get_recommendation_raw(available, league_context, all_players=None):
     (rather than recomputed) so the exposed score is exactly what the real
     decision used, not a re-derived approximation of it.
     """
-    bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions = calculate_bpa(
+    bpa_player, suggested_pick, gap, trade_bait_players, urgency_scores, urgency_modifiers, starter_needed_positions, blocked_positions, need_scores = calculate_bpa(
         available, league_context, all_players
     )
     final_pick = bpa_player or suggested_pick
     urgency_scores = urgency_scores or {}
     starter_needed_positions = starter_needed_positions or set()
     blocked_positions = blocked_positions or set()
+    need_scores = need_scores or {}
 
     vorp_players, replacement, _, _ = calculate_vorp(available, league_context, all_players)
 
@@ -1964,7 +1987,8 @@ def get_recommendation_raw(available, league_context, all_players=None):
 
     def _entry(v):
         pos = v["position"]
-        urgency = urgency_scores.get(pos, 0)
+        opportunity_cost = urgency_scores.get(pos, 0)
+        need = need_scores.get(pos, 0)
         blocked_reason = _override_blocked_reason(pos)
         return {
             "name": v["player"].get("full_name"),
@@ -1973,8 +1997,9 @@ def get_recommendation_raw(available, league_context, all_players=None):
             "value": round(v["value"], 2),
             "vorp": round(v["vorp"], 2),
             "replacement_level": round(replacement.get(pos, 0), 2),
-            "urgency": round(urgency, 2),
-            "score": round(_calc_score(v["vorp"], urgency, pos, urgency_modifiers), 2),
+            "opportunity_cost": round(opportunity_cost, 2),
+            "roster_need": round(need, 2),
+            "score": round(_calc_score(v["vorp"], opportunity_cost, need, pos, urgency_modifiers), 2),
             "eligible_for_pick": blocked_reason is None,
             "not_eligible_reason": blocked_reason,
         }
