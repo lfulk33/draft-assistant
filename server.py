@@ -18,11 +18,12 @@ from sleeper_draft import (
     get_available_rookies, get_available_players, count_my_picks
 )
 from draft_advisor import (
-    get_recommendation, calculate_starter_ids,
+    get_recommendation, get_recommendation_raw, calculate_starter_ids,
     calculate_roster_needs, get_roster_recommendations
 )
 from salary_cap import load_salaries, load_keepers
 from fantasypros_client import load_fantasypros_redraft_values
+import historical_stats
 import waiver_scout
 import chopped_bid_advisor
 
@@ -211,6 +212,25 @@ def _build_draft_state(draft_id, league_id, user_id):
         }
     else:
         effective_players = PLAYERS
+
+    # Redraft leagues: rescale each skill-position player's current
+    # positional rank onto a real, ground-truth points scale (3-year
+    # average, weighted by this league's own scoring), so VORP comparisons
+    # across positions are fair regardless of whether the market-value
+    # source (FantasyPros/FantasyCalc) was built with this league's roster
+    # format in mind — see historical_stats.py for the full rationale.
+    # Dynasty is unaffected: real points has no equivalent for long-term
+    # asset value.
+    if not is_dynasty:
+        scoring_settings = league_detail.get("scoring_settings") or {}
+        real_points_values = historical_stats.apply_real_points_translation(
+            effective_players, "fc_redraft_value", scoring_settings
+        )
+        effective_players = {
+            pid: ({**p, "fc_redraft_value": real_points_values[pid]}
+                  if pid in real_points_values else p)
+            for pid, p in effective_players.items()
+        }
 
     available = (
         get_available_rookies(effective_players, picks)
@@ -436,25 +456,38 @@ def api_draft(draft_id):
 @app.route("/api/recommend", methods=["POST"])
 def api_recommend():
     """
-    Fetches fresh draft state from Sleeper and returns a Claude-generated
-    pick recommendation. Always re-fetches picks to avoid stale data.
+    Fetches fresh draft state from Sleeper and returns a pick
+    recommendation. Always re-fetches picks to avoid stale data.
+
+    use_claude (default true): when false, skips the Claude call entirely
+    and returns the deterministic algorithm's numbers directly — VORP,
+    value, positional rank, replacement level for the pick and the top
+    alternatives at every position — no narrative text, no LLM cost.
     """
     try:
         data = request.json
         draft_id = data["draft_id"]
         league_id = data["league_id"]
         user_id = data["user_id"]
+        use_claude = data.get("use_claude", True)
 
         state = _build_draft_state(draft_id, league_id, user_id)
 
-        rec = get_recommendation(
-            state["picks"],
-            state["available"],
-            state["my_roster"],
-            state["league_context"],
-            len(state["picks"]) + 1,
-            state["all_players"]
-        )
+        if use_claude:
+            rec = get_recommendation(
+                state["picks"],
+                state["available"],
+                state["my_roster"],
+                state["league_context"],
+                len(state["picks"]) + 1,
+                state["all_players"]
+            )
+        else:
+            rec = get_recommendation_raw(
+                state["available"],
+                state["league_context"],
+                state["all_players"]
+            )
 
         # Verify recommended player is still available.
         # Fetch picks fresh from Sleeper right now — not the cached picks from

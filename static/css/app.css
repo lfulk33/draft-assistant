@@ -967,6 +967,96 @@ body {
   margin: 0 0 6px 0;
 }
 
+.claude-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--gray-600);
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+
+.claude-toggle input {
+  accent-color: var(--accent);
+}
+
+.claude-toggle-sub {
+  color: var(--gray-400);
+}
+
+.raw-rec-numbers {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 14px;
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.raw-rec-numbers .stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--gray-200);
+}
+
+.raw-rec-numbers .stat-row span:first-child {
+  color: var(--gray-600);
+}
+
+.raw-pos-group {
+  margin-bottom: 14px;
+}
+
+.raw-pos-head {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray-600);
+  margin-bottom: 6px;
+}
+
+.raw-alt-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--gray-100);
+  font-size: 13px;
+}
+
+.raw-alt-row-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.raw-alt-row.is-pick {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.raw-alt-row.is-blocked {
+  opacity: 0.65;
+}
+
+.raw-alt-name {
+  flex: 1;
+}
+
+.raw-alt-nums {
+  color: var(--gray-600);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.raw-alt-blocked-note {
+  font-size: 11px;
+  color: #c0392b;
+  margin-top: 3px;
+  font-style: italic;
+}
+
 .btn-recommend {
   flex: 1;
   font-family: var(--font-sans);

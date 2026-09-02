@@ -7,6 +7,7 @@ venv/
 # Data files (large, auto-generated)
 players.json
 fantasy_players.json
+season_stats_*.json
 
 # Environment
 .env
