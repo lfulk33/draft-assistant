@@ -1152,18 +1152,34 @@ def _modifier_for(pos, urgency_modifiers):
 
 def _calc_score(vorp, urgency, pos, urgency_modifiers):
     """
-    score = vorp * urgency^modifier (or vorp / urgency^modifier when vorp is
-    negative — see _bpa_decision_v2's docstring for the full rationale).
-    Module-level so get_recommendation_raw can expose the exact same score
-    Claude's recommendation is actually based on, not a re-derived
-    approximation of it.
+    score = vorp * (1 + urgency)^modifier (or vorp / (1 + urgency)^modifier
+    when vorp is negative — see _bpa_decision_v2's docstring for the full
+    rationale on the positive/negative split). Module-level so
+    get_recommendation_raw can expose the exact same score the real
+    decision is actually based on, not a re-derived approximation of it.
+
+    Using (1 + urgency) rather than a bare urgency^modifier is deliberate:
+    urgency legitimately hits exactly 0 whenever the opportunity-cost
+    simulation finds that waiting costs nothing (e.g. the current best
+    player at a position will obviously still be there after however many
+    picks happen before your next turn — routine with an accurate, often
+    small picks_until_next). A bare urgency^modifier would multiply the
+    score to a flat zero in that case regardless of VORP, discarding a
+    perfectly good player's entire value just because there's no
+    time-pressure to grab him *this instant* — verified live: a WR with
+    VORP 128 scored exactly 0 this way. (1 + urgency) guarantees the
+    score gracefully falls back to plain VORP at urgency=0 (matching how
+    modifier=0 already falls back to plain VORP), and still scales up
+    correctly as urgency rises above 0. This also removes the need for the
+    old safe_urgency floor in the negative branch, since 1+urgency is
+    always >= 1 and can't produce a division blowup.
     """
     modifier = _modifier_for(pos, urgency_modifiers)
+    scaled_urgency = (1 + urgency) ** modifier
     if vorp >= 0:
-        return vorp * (urgency ** modifier)
+        return vorp * scaled_urgency
     else:
-        safe_urgency = max(urgency, 0.01)
-        return vorp / (safe_urgency ** modifier)
+        return vorp / scaled_urgency
 
 
 def _eligible_for_override(pos, urgency_scores, starter_needed_positions, blocked_positions):
@@ -1767,9 +1783,20 @@ def calculate_bpa(available, league_context, all_players=None):
         return None, best_fallback["player"] if best_fallback else None, 0, trade_bait_players, urgency_scores, None, None, None
 
     # Step 7: BPA decision (identical scoring for dynasty and redraft)
+    # A genuinely open FLEX/SUPER_FLEX slot is a real starter opportunity,
+    # not backup depth — a position whose dedicated slots are full but that
+    # could still fill an open flex slot must stay eligible for the
+    # override, or a strong pick at that position gets wrongly blocked as
+    # "starter slot already filled" (verified live: QB1 filled by Maye
+    # incorrectly excluded QB entirely, even with an open SUPER_FLEX slot
+    # a strong 2nd QB should be able to compete for). backup_needs is
+    # deliberately excluded here — that's bench depth, not a starter slot.
     starter_needed_positions = {
         pos for pos in ["QB", "RB", "WR", "TE"]
-        if picks_by_pos.get(pos, 0) < dedicated.get(pos, 0)
+        if picks_by_pos.get(pos, 0) < (
+            dedicated.get(pos, 0) +
+            (drafted_count.get(pos, 0) - dedicated_cutoff.get(pos, 0)) / league_context.get("num_teams", 12)
+        )
     }
 
     # Ramp TE's (and, in single-QB leagues, QB's) urgency influence in from
