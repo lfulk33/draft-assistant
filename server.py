@@ -23,6 +23,7 @@ from draft_advisor import (
 )
 from salary_cap import load_salaries, load_keepers
 from fantasypros_client import load_fantasypros_redraft_values
+import historical_stats
 import waiver_scout
 import chopped_bid_advisor
 
@@ -211,6 +212,25 @@ def _build_draft_state(draft_id, league_id, user_id):
         }
     else:
         effective_players = PLAYERS
+
+    # Redraft leagues: rescale each skill-position player's current
+    # positional rank onto a real, ground-truth points scale (3-year
+    # average, weighted by this league's own scoring), so VORP comparisons
+    # across positions are fair regardless of whether the market-value
+    # source (FantasyPros/FantasyCalc) was built with this league's roster
+    # format in mind — see historical_stats.py for the full rationale.
+    # Dynasty is unaffected: real points has no equivalent for long-term
+    # asset value.
+    if not is_dynasty:
+        scoring_settings = league_detail.get("scoring_settings") or {}
+        real_points_values = historical_stats.apply_real_points_translation(
+            effective_players, "fc_redraft_value", scoring_settings
+        )
+        effective_players = {
+            pid: ({**p, "fc_redraft_value": real_points_values[pid]}
+                  if pid in real_points_values else p)
+            for pid, p in effective_players.items()
+        }
 
     available = (
         get_available_rookies(effective_players, picks)

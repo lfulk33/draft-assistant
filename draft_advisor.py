@@ -659,6 +659,13 @@ def calculate_replacement_levels(league_context, player_pool, value_key):
         # Run separate competition for each flex slot type.
         # This prevents QB from filling FLEX slots (RB/WR/TE only) just because
         # QB is eligible for SUPER_FLEX in the same league.
+        #
+        # Cross-position comparability (e.g. QB vs RB/WR/TE for a SUPER_FLEX
+        # slot) is handled upstream now: for redraft leagues, `value_key`
+        # values are already real-points-equivalent (see
+        # historical_stats.apply_real_points_translation), so a plain value
+        # comparison here is already on a fair, cross-position-comparable
+        # scale. No position-specific special-casing needed in this step.
         for slot_type, count in flex_slot_counts.items():
             eligible_positions = FLEX_ELIGIBILITY.get(slot_type, set())
             slots_for_this_type = count * num_teams
