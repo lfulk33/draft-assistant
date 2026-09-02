@@ -1302,9 +1302,23 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
     overall_score = _calc_score(best_overall["vorp"], overall_urgency, overall_need, overall_pos, urgency_modifiers)
     needed_score = _calc_score(best_needed["vorp"], needed_urgency, needed_need, needed_pos, urgency_modifiers)
 
-    best_pos = needed_pos
-    best_score = needed_score
-    best_v = best_needed
+    # best_needed is only a valid starting baseline if its own position is
+    # itself eligible — otherwise it's exactly the case _eligible_for_override
+    # exists to prevent (e.g. a backup-tier QB slot with no genuine starter
+    # need left) winning by default just because it was never actually
+    # checked against the gate the alternatives below are held to. Verified
+    # live: Jaxson Dart (QB, both real QB starter slots already filled by
+    # Maye/Purdy — only a backup slot remained) was winning outright this
+    # way despite RB/WR/TE all still having a completely open starter slot.
+    if _eligible_for_override(needed_pos, urgency_scores, starter_needed_positions, blocked_positions):
+        best_pos = needed_pos
+        best_score = needed_score
+        best_v = best_needed
+    else:
+        best_pos = None
+        best_score = float("-inf")
+        best_v = None
+
     if _eligible_for_override(overall_pos, urgency_scores, starter_needed_positions, blocked_positions) and overall_score > best_score:
         best_pos = overall_pos
         best_score = overall_score
@@ -1317,6 +1331,14 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
             best_score = score
             best_pos = pos
             best_v = v
+
+    # Only reachable if literally nothing was eligible (e.g. every position
+    # is backup-tier-only right now) — fall back to best_needed rather than
+    # returning nothing, since some recommendation beats none.
+    if best_v is None:
+        best_pos = needed_pos
+        best_score = needed_score
+        best_v = best_needed
 
     if DEV_MODE:
         all_scores = sorted(
