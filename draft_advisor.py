@@ -944,26 +944,33 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
     my_draft_slot = league_context.get("my_draft_slot", 1) or 1
     current_pick = sum(picks_by_pos.values()) + 1  # approximate current pick number
 
-    # Calculate picks until your next turn based on draft slot and snake format.
-    # In a snake draft, if you're at slot S in a N-team league:
-    # - Odd rounds: you pick at position S, next turn is (N-S) + S = N picks away... 
-    # Actually: picks until next turn = (num_teams - my_draft_slot) + (my_draft_slot) = num_teams
-    # But at the turn (slot 1 or slot N): picks until next = num_teams * 2 - 1 or 1
-    # Simplification: picks_until_next = num_teams + (num_teams - 2 * my_draft_slot + 1).abs() 
-    # Recalculate picks until next turn based on current round and draft slot.
-    # In odd rounds: slot 1 picks first, waits 2*(N-1)+1 picks until next turn
-    # In even rounds: slot 1 picks last, only 1 pick until next turn (back-to-back)
-    # Use actual pick number from league context, not just our picks
+    # Calculate picks until your next turn from the real snake-draft order.
+    # In a standard snake draft, team at slot S (1-indexed) picks at position
+    # S in odd (forward) rounds and position (N - S + 1) in even (reverse)
+    # rounds. The gap to your next turn alternates between 2*(N-S)+1 and
+    # 2*S-1 depending on whether you're currently in a forward or reverse
+    # round — it is NOT a fixed constant regardless of slot (a prior version
+    # of this code assumed 2*(num_teams-1) always, which both overstates and
+    # understates the real gap depending on slot and round parity).
     picks_made_total = league_context.get("picks_made_total", 0)
     if DEV_MODE:
         print(f"  picks_made_total from context: {picks_made_total}")
     picks_made_total = picks_made_total or sum(picks_by_pos.values()) * num_teams
-    current_round = math.ceil((picks_made_total + 1) / num_teams)
-    # For opportunity cost simulation, use picks between your current pick
-    # and your NEXT pick in the following round. Regardless of slot, other
-    # teams make 2*(num_teams-1) picks between your two consecutive round picks.
-    # This correctly models how depleted each position will be when you pick again.
-    picks_until_next = 2 * (num_teams - 1)
+    current_pick_number = picks_made_total + 1
+
+    def _pick_number_for_slot(round_num, slot, teams):
+        if round_num % 2 == 1:  # forward round
+            return (round_num - 1) * teams + slot
+        return (round_num - 1) * teams + (teams - slot + 1)  # reverse round
+
+    current_round_num = (current_pick_number - 1) // num_teams + 1
+    next_pick_number = None
+    for r in range(current_round_num, current_round_num + 3):
+        candidate = _pick_number_for_slot(r, my_draft_slot, num_teams)
+        if candidate > current_pick_number:
+            next_pick_number = candidate
+            break
+    picks_until_next = (next_pick_number - current_pick_number) if next_pick_number else num_teams
 
     effective_backup_needs = dict(backup_needs)
 
