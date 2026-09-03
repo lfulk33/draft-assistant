@@ -2093,7 +2093,19 @@ def calculate_bpa(available, league_context, all_players=None):
             relative_strength_modifiers[pos] = URGENCY_MODIFIER * min(1.0, ratio)
 
     urgency_modifiers = dict(relative_strength_modifiers)
-    urgency_modifiers["TE"] = min(urgency_modifiers.get("TE", URGENCY_MODIFIER), ramped_modifier)
+    # This dampener exists to correct one specific false assumption: the
+    # opportunity-cost simulation, if it has no real ADP data, assumes
+    # every team drafts in pure VORP order — a false premise that made TE
+    # look far more urgent early than real drafts ever bear out (verified
+    # against ~7,000 real 2QB drafts: zero TEs in the first 28 picks).
+    # Once adp_map is present, that false premise is gone — opportunity
+    # cost is already computed from real draft behavior (team-aware or
+    # generic ADP order, see _calculate_urgency), so a genuinely early
+    # opportunity cost for TE (e.g. a clear TE1 with real snipe risk) is a
+    # real signal, not the artifact this modifier was built to suppress.
+    # Applying it on top of already-real data would double-correct.
+    if not adp_map:
+        urgency_modifiers["TE"] = min(urgency_modifiers.get("TE", URGENCY_MODIFIER), ramped_modifier)
     if not has_superflex:
         # A backup QB's "urgency" isn't a real signal at all here — there's
         # no genuine race for a 2nd unusable body the way there is for a
