@@ -1,5 +1,6 @@
 import json
 import math
+import random
 from datetime import date
 import adp_client
 from llm_client import get_completion
@@ -978,43 +979,78 @@ def _upcoming_pick_roster_ids(current_pick_number, count, num_teams, slot_to_ros
     return roster_ids
 
 
-def _simulate_team_aware_taken(viable_active, adp_map, pick_sequence, all_picks, players, dedicated_slots, rosters_by_id):
+def _default_stdev(adp):
     """
-    Walk the next N picks in real draft order and guess what each specific
-    team takes: the best-ADP player at a position where THAT team still has
-    an open dedicated starter slot, falling back to pure best-ADP-overall
-    once a team's dedicated needs are filled (backup/BPA mode). Replaces
-    assuming every pick goes in one league-wide ADP order, which has no
-    way to know e.g. a team sitting at 0 WR will prioritize WR regardless
-    of who's "next" by generic ADP.
+    Real ADP variance grows with draft depth. No data source gives us a
+    per-player stdev for Sleeper-specific entries (BeatADP) or for anyone
+    FFC doesn't cover at all — this is a deliberately soft heuristic
+    scaled to draft position rather than pretending zero variance for
+    those players.
     """
-    def _adp_sort_key(v):
-        entry = adp_map.get(v["player"].get("player_id")) if adp_map else None
-        return entry["adp"] if entry else 9999
+    return max(3.0, adp * 0.12)
 
-    pool = sorted(viable_active, key=_adp_sort_key)
-    team_counts = {
+
+def _simulate_team_aware_best_after(viable_active, adp_map, pick_sequence, all_picks, players, dedicated_slots, rosters_by_id, needed_positions, seed, num_simulations=150):
+    """
+    Monte Carlo version of the team-aware "who's taken" simulation. ADP is
+    a mean, not a guarantee — a specific team can reach for a player well
+    outside generic expectation (one GM just likes Waddle more than the
+    market does). A deterministic top-N cutoff treats that as impossible:
+    anyone just past the cutoff shows exactly 0 risk, anyone just before
+    it shows 100%. Real drafts don't have a cliff there.
+
+    Each run jitters every player's effective ADP by their real stdev
+    (from FFC; a draft-depth-scaled default — see _default_stdev — for
+    anyone without one, e.g. BeatADP-only matches), sorts by that jittered
+    order, and runs the same per-team need-aware pick logic as before on
+    it. Averaging best-remaining-VORP per position across many runs turns
+    the hard cliff into a smooth probability: a player just outside the
+    "expected" cutoff now contributes a real, usually-small, nonzero
+    chance of being gone instead of a guaranteed survival.
+
+    Seeded deterministically from the current draft state (not global
+    random) so repeated calls against an unchanged board return identical
+    numbers — this models uncertainty that's already there, it doesn't
+    inject fresh noise on every request.
+    """
+    rng = random.Random(seed)
+    team_counts_base = {
         rid: _team_position_counts(rid, all_picks, players, rosters_by_id)
         for rid in set(pick_sequence) if rid is not None
     }
 
-    taken_names = []
-    for roster_id in pick_sequence:
-        if not pool:
-            break
-        pick = None
-        if roster_id is not None:
-            open_positions = _team_open_dedicated_positions(team_counts.get(roster_id, {}), dedicated_slots)
-            pick = next((v for v in pool if v["position"] in open_positions), None)
-        if pick is None:
-            pick = pool[0]
-        taken_names.append(pick["player"].get("full_name"))
-        pool.remove(pick)
-        if roster_id is not None:
-            team_counts.setdefault(roster_id, {})
-            team_counts[roster_id][pick["position"]] = team_counts[roster_id].get(pick["position"], 0) + 1
+    totals = {pos: 0.0 for pos in needed_positions}
+    for _ in range(num_simulations):
+        def _jittered_key(v, _rng=rng):
+            entry = adp_map.get(v["player"].get("player_id")) if adp_map else None
+            if not entry:
+                return 9999 + _rng.random()
+            mean = entry["adp"]
+            stdev = entry.get("stdev") or _default_stdev(mean)
+            return _rng.gauss(mean, stdev)
 
-    return taken_names
+        pool = sorted(viable_active, key=_jittered_key)
+        team_counts = {rid: dict(counts) for rid, counts in team_counts_base.items()}
+
+        for roster_id in pick_sequence:
+            if not pool:
+                break
+            pick = None
+            if roster_id is not None:
+                open_positions = _team_open_dedicated_positions(team_counts.get(roster_id, {}), dedicated_slots)
+                pick = next((v for v in pool if v["position"] in open_positions), None)
+            if pick is None:
+                pick = pool[0]
+            pool.remove(pick)
+            if roster_id is not None:
+                team_counts.setdefault(roster_id, {})
+                team_counts[roster_id][pick["position"]] = team_counts[roster_id].get(pick["position"], 0) + 1
+
+        for pos in needed_positions:
+            best = next((v for v in pool if v["position"] == pos), None)
+            totals[pos] += best["vorp"] if best else 0
+
+    return {pos: totals[pos] / num_simulations for pos in needed_positions}
 
 
 def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None, sim_active=None, replacement=None, adp_map=None, all_players=None):
@@ -1140,49 +1176,54 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
     # Simulate N picks happening before your next turn. Three tiers, each
     # falling back to the next on missing data rather than ever blocking a
     # recommendation:
-    #   1. Team-aware: walk the real draft order and ask what each specific
-    #      upcoming team needs (a team sitting at 0 WR takes the best
-    #      available WR regardless of generic ADP) — needs all_picks,
-    #      slot_to_roster_id and all_players to identify teams and their
-    #      current rosters.
-    #   2. Real ADP order — still assumes every pick is league-wide-generic,
-    #      but at least reflects real human pacing (e.g. TE/backup QB wait
-    #      well past raw VORP rank) instead of pure VORP order.
-    #   3. Pure VORP order.
+    #   1. Team-aware + probabilistic: walk the real draft order, ask what
+    #      each specific upcoming team needs (a team sitting at 0 WR takes
+    #      the best available WR regardless of generic ADP), and treat
+    #      each player's ADP as a mean with real variance rather than a
+    #      hard cutoff — a specific team reaching for a player outside
+    #      generic expectation is a real, if usually small, possibility,
+    #      not a zero. See _simulate_team_aware_best_after. Needs
+    #      all_picks, slot_to_roster_id and all_players to identify teams
+    #      and their current rosters.
+    #   2. Real ADP order (deterministic top-N cutoff) — still assumes
+    #      every pick is league-wide-generic, but at least reflects real
+    #      human pacing (e.g. TE/backup QB wait well past raw VORP rank)
+    #      instead of pure VORP order.
+    #   3. Pure VORP order (deterministic top-N cutoff).
     slot_to_roster_id = league_context.get("slot_to_roster_id")
     all_picks = league_context.get("all_picks")
-    team_aware_taken = None
+    best_after = None
     if adp_map and slot_to_roster_id and all_picks is not None and all_players:
         try:
             pick_sequence = _upcoming_pick_roster_ids(
                 current_pick_number, picks_until_next, num_teams, slot_to_roster_id
             )
-            team_aware_taken = _simulate_team_aware_taken(
+            best_after = _simulate_team_aware_best_after(
                 viable_active, adp_map, pick_sequence, all_picks, all_players,
-                dedicated, league_context.get("rosters_by_id")
+                dedicated, league_context.get("rosters_by_id"), needed_positions,
+                seed=current_pick_number
             )
         except Exception as e:
             if DEV_MODE:
-                print(f"  team-aware simulation failed, falling back to generic ADP order: {e}")
-            team_aware_taken = None
+                print(f"  team-aware probabilistic simulation failed, falling back to generic ADP order: {e}")
+            best_after = None
 
-    if team_aware_taken is not None:
-        top_n_players = team_aware_taken
-    elif adp_map:
-        def _adp_sort_key(v):
-            entry = adp_map.get(v["player"].get("player_id"))
-            return entry["adp"] if entry else 9999
-        viable_by_adp = sorted(viable_active, key=_adp_sort_key)
-        top_n_players = [v["player"].get("full_name") for v in viable_by_adp[:picks_until_next]]
-    else:
-        top_n_players = [v["player"].get("full_name") for v in viable_active[:picks_until_next]]
-    viable_after = [v for v in viable_active if v["player"].get("full_name") not in top_n_players]
+    if best_after is None:
+        if adp_map:
+            def _adp_sort_key(v):
+                entry = adp_map.get(v["player"].get("player_id"))
+                return entry["adp"] if entry else 9999
+            viable_by_adp = sorted(viable_active, key=_adp_sort_key)
+            top_n_players = [v["player"].get("full_name") for v in viable_by_adp[:picks_until_next]]
+        else:
+            top_n_players = [v["player"].get("full_name") for v in viable_active[:picks_until_next]]
+        viable_after = [v for v in viable_active if v["player"].get("full_name") not in top_n_players]
 
-    # Get best available ACTIVE player at each position after N picks
-    best_after = {}
-    for pos in needed_positions:
-        best = next((v for v in viable_after if v["position"] == pos), None)
-        best_after[pos] = best["vorp"] if best else 0
+        # Get best available ACTIVE player at each position after N picks
+        best_after = {}
+        for pos in needed_positions:
+            best = next((v for v in viable_after if v["position"] == pos), None)
+            best_after[pos] = best["vorp"] if best else 0
 
     urgency_scores = {}
     need_scores = {}

@@ -100,6 +100,10 @@ def build_adp_map(league_context, players, year):
                 "adp": entry["adp"],
                 "adp_formatted": entry["adp_formatted"],
                 "times_drafted": entry.get("times_drafted", 0),
+                # Real per-player variance from FFC — used to model ADP as
+                # a mean with uncertainty (see draft_advisor's Monte Carlo
+                # "who's taken next" simulation) rather than a guarantee.
+                "stdev": entry.get("stdev"),
             }
 
     try:
