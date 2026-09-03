@@ -54,7 +54,7 @@ if _dsff_keeper_unmatched:
 
 def build_league_context(league_detail, draft_detail, my_roster, picks,
                           my_roster_id, players, my_draft_picks=None,
-                          is_dynasty=True, starter_ids=None):
+                          is_dynasty=True, starter_ids=None, rosters=None):
     my_picks_count = count_my_picks(picks, my_roster_id)
     total_rounds = draft_detail["settings"].get("rounds", 4)
 
@@ -143,6 +143,15 @@ def build_league_context(league_detail, draft_detail, my_roster, picks,
             }
         },
         "is_dynasty": is_dynasty,
+
+        # For team-aware "who drafts next" simulation in draft_advisor —
+        # lets the urgency simulation ask "what does THIS specific team
+        # picking next actually need" instead of assuming every pick goes
+        # in pure ADP order league-wide.
+        "all_picks": picks,
+        "slot_to_roster_id": draft_detail.get("slot_to_roster_id", {}),
+        "rosters_by_id": {r["roster_id"]: r for r in (rosters or [])},
+
         "my_draft_slot": my_roster_id,  # placeholder, set properly below
         "bpa_threshold": BPA_THRESHOLD_DYNASTY if is_dynasty else BPA_THRESHOLD_REDRAFT,
         "value_type": "dynasty_value" if is_dynasty else "redraft_value",
@@ -291,7 +300,8 @@ def _build_draft_state(draft_id, league_id, user_id):
 
     league_context = build_league_context(
         league_detail, draft_detail, my_roster, picks,
-        my_roster_id, effective_players, my_draft_picks, is_dynasty, starter_ids
+        my_roster_id, effective_players, my_draft_picks, is_dynasty, starter_ids,
+        rosters
     )
     league_context["my_draft_slot"] = my_slot
     if has_veteran_talent:

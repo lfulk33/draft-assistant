@@ -919,7 +919,105 @@ def _has_active_redraft_viable(pos, viable_active):
         for v in viable_active
     )
 
-def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None, sim_active=None, replacement=None, adp_map=None):
+def _team_position_counts(roster_id, all_picks, players, rosters_by_id=None):
+    """
+    How many players a given roster currently has at each skill position —
+    this draft's picks plus any pre-existing roster (dynasty carryover).
+    Redraft leagues start every roster empty, so all_picks alone covers it;
+    dynasty leagues need the existing roster too, hence rosters_by_id.
+    """
+    counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}
+    seen_ids = set()
+    for p in all_picks or []:
+        if p.get("roster_id") != roster_id or not p.get("player_id") or p.get("is_keeper"):
+            continue
+        pid = p["player_id"]
+        pos = players.get(pid, {}).get("position")
+        if pos in counts:
+            counts[pos] += 1
+        seen_ids.add(pid)
+    roster = (rosters_by_id or {}).get(roster_id)
+    if roster:
+        for pid in (roster.get("players") or []):
+            if pid in seen_ids:
+                continue
+            pos = players.get(pid, {}).get("position")
+            if pos in counts:
+                counts[pos] += 1
+    return counts
+
+
+def _team_open_dedicated_positions(counts, dedicated_slots):
+    """Positions where this team hasn't yet filled its dedicated starter slots."""
+    return [
+        pos for pos in ("QB", "RB", "WR", "TE")
+        if counts.get(pos, 0) < dedicated_slots.get(pos, 0)
+    ]
+
+
+def _upcoming_pick_roster_ids(current_pick_number, count, num_teams, slot_to_roster_id):
+    """
+    Real snake-draft roster order for the next `count` picks, STARTING AT
+    current_pick_number itself (the next pick to actually happen — not
+    mine, since picks_until_next is defined as the gap before my own next
+    turn). Mirrors the forward/reverse round math used elsewhere for
+    "picks until my next turn" — same idea, run forward instead of solved
+    for one slot. Off-by-one here would either drop a real opponent pick
+    from the front of the window or leak my own next pick into it.
+    """
+    def _slot_for_pick_number(pick_number, teams):
+        round_num = (pick_number - 1) // teams + 1
+        pos_in_round = (pick_number - 1) % teams + 1
+        return pos_in_round if round_num % 2 == 1 else teams - pos_in_round + 1
+
+    roster_ids = []
+    for offset in range(count):
+        slot = _slot_for_pick_number(current_pick_number + offset, num_teams)
+        roster_id = slot_to_roster_id.get(str(slot), slot_to_roster_id.get(slot))
+        roster_ids.append(roster_id)
+    return roster_ids
+
+
+def _simulate_team_aware_taken(viable_active, adp_map, pick_sequence, all_picks, players, dedicated_slots, rosters_by_id):
+    """
+    Walk the next N picks in real draft order and guess what each specific
+    team takes: the best-ADP player at a position where THAT team still has
+    an open dedicated starter slot, falling back to pure best-ADP-overall
+    once a team's dedicated needs are filled (backup/BPA mode). Replaces
+    assuming every pick goes in one league-wide ADP order, which has no
+    way to know e.g. a team sitting at 0 WR will prioritize WR regardless
+    of who's "next" by generic ADP.
+    """
+    def _adp_sort_key(v):
+        entry = adp_map.get(v["player"].get("player_id")) if adp_map else None
+        return entry["adp"] if entry else 9999
+
+    pool = sorted(viable_active, key=_adp_sort_key)
+    team_counts = {
+        rid: _team_position_counts(rid, all_picks, players, rosters_by_id)
+        for rid in set(pick_sequence) if rid is not None
+    }
+
+    taken_names = []
+    for roster_id in pick_sequence:
+        if not pool:
+            break
+        pick = None
+        if roster_id is not None:
+            open_positions = _team_open_dedicated_positions(team_counts.get(roster_id, {}), dedicated_slots)
+            pick = next((v for v in pool if v["position"] in open_positions), None)
+        if pick is None:
+            pick = pool[0]
+        taken_names.append(pick["player"].get("full_name"))
+        pool.remove(pick)
+        if roster_id is not None:
+            team_counts.setdefault(roster_id, {})
+            team_counts[roster_id][pick["position"]] = team_counts[roster_id].get(pick["position"], 0) + 1
+
+    return taken_names
+
+
+def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None, dedicated_cutoff=None, sim_taxi=None, sim_active=None, replacement=None, adp_map=None, all_players=None):
     """
     Calculate how urgently each position needs to be addressed THIS pick.
 
@@ -1039,16 +1137,38 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         best = next((v for v in viable_active if v["position"] == pos), None)
         best_now[pos] = best["vorp"] if best else 0
 
-    # Simulate N picks happening before your next turn. Prefer real ADP
-    # order over VORP order when available — VORP-order assumes every
-    # drafter picks in pure value order, which is exactly the false
-    # assumption that made a hand-tuned modifier necessary in the first
-    # place (real drafters wait on TE/backup QB well past their VORP
-    # rank). Real ADP bakes that behavior in directly. Falls back to VORP
-    # order for any player ADP has no data for (deep bench players who
-    # were never going to be "drafted next" regardless), or entirely if
-    # no ADP data could be fetched for this league at all.
-    if adp_map:
+    # Simulate N picks happening before your next turn. Three tiers, each
+    # falling back to the next on missing data rather than ever blocking a
+    # recommendation:
+    #   1. Team-aware: walk the real draft order and ask what each specific
+    #      upcoming team needs (a team sitting at 0 WR takes the best
+    #      available WR regardless of generic ADP) — needs all_picks,
+    #      slot_to_roster_id and all_players to identify teams and their
+    #      current rosters.
+    #   2. Real ADP order — still assumes every pick is league-wide-generic,
+    #      but at least reflects real human pacing (e.g. TE/backup QB wait
+    #      well past raw VORP rank) instead of pure VORP order.
+    #   3. Pure VORP order.
+    slot_to_roster_id = league_context.get("slot_to_roster_id")
+    all_picks = league_context.get("all_picks")
+    team_aware_taken = None
+    if adp_map and slot_to_roster_id and all_picks is not None and all_players:
+        try:
+            pick_sequence = _upcoming_pick_roster_ids(
+                current_pick_number, picks_until_next, num_teams, slot_to_roster_id
+            )
+            team_aware_taken = _simulate_team_aware_taken(
+                viable_active, adp_map, pick_sequence, all_picks, all_players,
+                dedicated, league_context.get("rosters_by_id")
+            )
+        except Exception as e:
+            if DEV_MODE:
+                print(f"  team-aware simulation failed, falling back to generic ADP order: {e}")
+            team_aware_taken = None
+
+    if team_aware_taken is not None:
+        top_n_players = team_aware_taken
+    elif adp_map:
         def _adp_sort_key(v):
             entry = adp_map.get(v["player"].get("player_id"))
             return entry["adp"] if entry else 9999
@@ -1793,7 +1913,7 @@ def calculate_bpa(available, league_context, all_players=None):
                 print(f"  adp_client.build_adp_map failed, falling back to VORP-order simulation: {e}")
 
     most_needed_pos, urgency_scores, need_scores = _calculate_urgency(
-        viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi, sim_active, replacement, adp_map
+        viable, picks_by_pos, league_context, drafted_count, dedicated_cutoff, sim_taxi, sim_active, replacement, adp_map, all_players
     )
 
     # Step 6: Find the two key candidates
