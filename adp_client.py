@@ -24,6 +24,7 @@ import time
 
 import requests
 
+import beatadp_client
 from salary_cap import _normalize_name, _build_name_index, _resolve_match
 
 _CACHE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -77,6 +78,13 @@ def build_adp_map(league_context, players, year):
     {sleeper_player_id: {"adp": float, "adp_formatted": str, "times_drafted": int}}
     for every player matched between FFC's real ADP data and this league's
     format (nearest-supported team count, format per format_for_league).
+
+    Sleeper-platform-specific ADP (see beatadp_client) overrides FFC's
+    number per player where available — it's a closer match to what
+    drafters using Sleeper's own app actually see and react to, since it's
+    built from real Sleeper drafts in this exact format rather than a
+    blend across every platform. Falls back to FFC for anyone not covered
+    (BeatADP's pool doesn't cover every player FFC does).
     """
     format_key = format_for_league(league_context)
     num_teams = _nearest_supported_teams(league_context.get("num_teams", 12))
@@ -93,4 +101,12 @@ def build_adp_map(league_context, players, year):
                 "adp_formatted": entry["adp_formatted"],
                 "times_drafted": entry.get("times_drafted", 0),
             }
+
+    try:
+        sleeper_map = beatadp_client.build_adp_map(league_context, players)
+    except Exception:
+        sleeper_map = {}
+    for player_id, entry in sleeper_map.items():
+        adp_map[player_id] = {**adp_map.get(player_id, {}), **entry}
+
     return adp_map

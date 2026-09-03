@@ -9,6 +9,7 @@ players.json
 fantasy_players.json
 season_stats_*.json
 adp_*.json
+beatadp_players.json
 
 # Environment
 .env
