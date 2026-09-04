@@ -948,6 +948,30 @@ def _team_position_counts(roster_id, all_picks, players, rosters_by_id=None):
     return counts
 
 
+def _best_healthy_first(pool, strict_starter_health, pos=None):
+    """
+    Best player in `pool` (already VORP-sorted descending), preferring a
+    healthy one when strict_starter_health is on — same reasoning as the
+    best_now/best_after health gate in _calculate_urgency, applied here to
+    the actual candidate selection (best_overall/best_needed/position_best)
+    instead of just the opportunity-cost math. Without this, an injured
+    player with the top raw VORP at his position still wins the final
+    recommendation outright — the opportunity-cost fix alone only stops
+    him from inflating OTHER candidates' scores, it doesn't stop him from
+    winning on his own real VORP.
+
+    Falls back to the unfiltered top if no healthy candidate exists at
+    all (never make a position vanish from consideration entirely).
+    pos=None means "best overall," not restricted to one position.
+    """
+    candidates = pool if pos is None else [v for v in pool if v["position"] == pos]
+    if strict_starter_health:
+        healthy = [v for v in candidates if not v["player"].get("injury_status")]
+        if healthy:
+            return healthy[0]
+    return candidates[0] if candidates else None
+
+
 def _team_open_dedicated_positions(counts, dedicated_slots):
     """Positions where this team hasn't yet filled its dedicated starter slots."""
     return [
@@ -1437,7 +1461,7 @@ def _eligible_for_override(pos, urgency_scores, starter_needed_positions, blocke
     return True
 
 
-def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None, blocked_positions=None, need_scores=None):
+def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, starter_needed_positions=None, urgency_modifiers=None, blocked_positions=None, need_scores=None, strict_starter_health=False):
     """
     Shared BPA decision scoring for both dynasty and redraft leagues.
 
@@ -1470,12 +1494,24 @@ def _bpa_decision_v2(best_overall, best_needed, urgency_scores, viable=None, sta
 
     need_scores = need_scores or {}
 
+    # Prefer a healthy player to represent each position in the decision
+    # below — an injured/backup-only player still shows up normally as
+    # himself elsewhere (alternatives list, his own real score), but he
+    # shouldn't be the one winning the actual recommendation on raw VORP
+    # alone when a healthy option exists at the same position.
     position_best = {}
+    position_best_any_health = {}
     if viable:
         for v in viable:
             pos = v["position"]
+            if pos not in position_best_any_health or v["vorp"] > position_best_any_health[pos]["vorp"]:
+                position_best_any_health[pos] = v
+            if strict_starter_health and v["player"].get("injury_status"):
+                continue
             if pos not in position_best or v["vorp"] > position_best[pos]["vorp"]:
                 position_best[pos] = v
+    for pos, v in position_best_any_health.items():
+        position_best.setdefault(pos, v)
 
     overall_pos = best_overall["position"]
     needed_pos = best_needed["position"]
@@ -1622,30 +1658,26 @@ def _find_candidates(viable, most_needed_pos, picks_by_pos, league_context, draf
             print(f"  needed check {pos}: have={have}, need={round(total,2)} (dedicated={dedicated.get(pos,0)}, backup={effective_backup_needs.get(pos,0)}, flex={round(fd,2)})")
         if have < total:
             needed_positions.append(pos)
+    strict_starter_health = league_context.get("strict_starter_health", False)
+
     # Best player at any needed position by VORP
-    best_needed_overall = next(
-        (v for v in viable_active if v["position"] in needed_positions),
-        None
+    best_needed_overall = _best_healthy_first(
+        [v for v in viable_active if v["position"] in needed_positions],
+        strict_starter_health
     )
-    best_needed_scarce = next(
-        (v for v in viable_active if v["position"] == most_needed_pos),
-        None
-    ) if most_needed_pos else None
+    best_needed_scarce = _best_healthy_first(viable_active, strict_starter_health, most_needed_pos) if most_needed_pos else None
 
     # If no active-bound player at most needed pos, allow best dynasty-value
     # taxi player there — urgency overrides normal taxi routing for needed positions
     if not best_needed_scarce and most_needed_pos:
-        best_needed_scarce = next(
-            (v for v in viable if v["position"] == most_needed_pos),
-            best_needed_overall
-        )
+        best_needed_scarce = _best_healthy_first(viable, strict_starter_health, most_needed_pos) or best_needed_overall
 
     best_needed_scarce = best_needed_scarce or best_needed_overall
 
     # Use best_needed_overall for BPA threshold comparison,
     # best_needed_scarce as the actual recommendation when BPA doesn't fire
     # Best player overall by VORP — defined here so it's available for comparison below
-    best_overall = viable_active[0] if viable_active else None
+    best_overall = _best_healthy_first(viable_active, strict_starter_health)
 
     # Use scarcity-based pick only if it's within reasonable range of best overall need.
     # If the scarce position player is dramatically worse by VORP, use the overall best instead.
@@ -2172,7 +2204,8 @@ def calculate_bpa(available, league_context, all_players=None):
             print(f"  flex_quality_filled={flex_quality_filled}, blocked_positions={blocked_positions}")
 
     bpa_player, suggested_pick, gap = _bpa_decision_v2(
-        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers, blocked_positions, need_scores
+        best_overall, best_needed, urgency_scores, viable, starter_needed_positions, urgency_modifiers, blocked_positions, need_scores,
+        league_context.get("strict_starter_health", False)
     )
 
     # Trade bait — only fires when the top player on the board is NOT the recommendation.
