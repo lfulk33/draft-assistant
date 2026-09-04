@@ -990,7 +990,7 @@ def _default_stdev(adp):
     return max(3.0, adp * 0.12)
 
 
-def _simulate_team_aware_best_after(viable_active, adp_map, pick_sequence, all_picks, players, dedicated_slots, rosters_by_id, needed_positions, seed, num_simulations=150):
+def _simulate_team_aware_best_after(viable_active, adp_map, pick_sequence, all_picks, players, dedicated_slots, rosters_by_id, needed_positions, seed, num_simulations=150, strict_starter_health=False):
     """
     Monte Carlo version of the team-aware "who's taken" simulation. ADP is
     a mean, not a guarantee — a specific team can reach for a player well
@@ -1047,7 +1047,14 @@ def _simulate_team_aware_best_after(viable_active, adp_map, pick_sequence, all_p
                 team_counts[roster_id][pick["position"]] = team_counts[roster_id].get(pick["position"], 0) + 1
 
         for pos in needed_positions:
-            best = next((v for v in pool if v["position"] == pos), None)
+            # A player still gets realistically drafted by other teams in
+            # the simulation above (an injured player is a real speculative
+            # target) — but he shouldn't be treated as YOUR surviving best
+            # option for a starter slot you can't afford to gamble on.
+            candidates = pool
+            if strict_starter_health:
+                candidates = [v for v in pool if not v["player"].get("injury_status")]
+            best = next((v for v in candidates if v["position"] == pos), None)
             totals[pos] += best["vorp"] if best else 0
 
     return {pos: totals[pos] / num_simulations for pos in needed_positions}
@@ -1167,10 +1174,24 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
 
     if DEV_MODE:
         print(f"  viable_active: {len(viable_active)}, viable_taxi: {len(viable_taxi)}")
+
+    # Weekly-elimination leagues (see server.CHOPPED_LEAGUE_ID) can't afford
+    # a starter who might not play — a player flagged with any current
+    # injury status shouldn't be counted as "the best option right now"
+    # for starter opportunity-cost purposes, even though he's still a
+    # perfectly real backup-tier pick at his own value. This only affects
+    # who best_now/best_after treat as the position's top option; it does
+    # NOT remove anyone from the actual candidate pool used elsewhere (a
+    # flagged player still shows up, still scores on his own real VORP).
+    if league_context.get("strict_starter_health"):
+        healthy_active = [v for v in viable_active if not v["player"].get("injury_status")]
+    else:
+        healthy_active = viable_active
+
     # Get best available ACTIVE player at each position right now
     best_now = {}
     for pos in needed_positions:
-        best = next((v for v in viable_active if v["position"] == pos), None)
+        best = next((v for v in healthy_active if v["position"] == pos), None)
         best_now[pos] = best["vorp"] if best else 0
 
     # Simulate N picks happening before your next turn. Three tiers, each
@@ -1201,7 +1222,8 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
             best_after = _simulate_team_aware_best_after(
                 viable_active, adp_map, pick_sequence, all_picks, all_players,
                 dedicated, league_context.get("rosters_by_id"), needed_positions,
-                seed=current_pick_number
+                seed=current_pick_number,
+                strict_starter_health=league_context.get("strict_starter_health", False)
             )
         except Exception as e:
             if DEV_MODE:
@@ -1218,6 +1240,8 @@ def _calculate_urgency(viable, picks_by_pos, league_context, drafted_count=None,
         else:
             top_n_players = [v["player"].get("full_name") for v in viable_active[:picks_until_next]]
         viable_after = [v for v in viable_active if v["player"].get("full_name") not in top_n_players]
+        if league_context.get("strict_starter_health"):
+            viable_after = [v for v in viable_after if not v["player"].get("injury_status")]
 
         # Get best available ACTIVE player at each position after N picks
         best_after = {}

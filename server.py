@@ -24,6 +24,7 @@ from draft_advisor import (
 from salary_cap import load_salaries, load_keepers
 from fantasypros_client import load_fantasypros_redraft_values
 import historical_stats
+import player_overrides
 import waiver_scout
 import chopped_bid_advisor
 
@@ -39,6 +40,15 @@ FANTASYPROS_REDRAFT_VALUES, _fp_unmatched = load_fantasypros_redraft_values(
 )
 if _fp_unmatched:
     print(f"[fantasypros_client] {len(_fp_unmatched)} entries unmatched (kickers/DEF expected)")
+
+# Weekly-elimination format: a starter who might not play this week isn't
+# a real starter option the way he would be in a normal season-long
+# league, regardless of his season-long value. Scoped to exactly this one
+# league, not a general redraft setting — see draft_advisor._calculate_urgency
+# for where this gates out injury-flagged players from the starter
+# opportunity-cost calculation specifically (they still show up normally
+# as real, pickable backup-tier options at their own value).
+CHOPPED_LEAGUE_ID = "1313587679283138560"
 
 # POC: salary-cap tracking, scoped to exactly one league. Not a general
 # feature yet — see project memory for the plan to generalize this later.
@@ -241,6 +251,25 @@ def _build_draft_state(draft_id, league_id, user_id):
             for pid, p in effective_players.items()
         }
 
+    # Manual per-player corrections (see player_overrides.py) — hand-verified
+    # facts Sleeper's own data doesn't reliably carry, most commonly a
+    # suspension/exempt-list situation that never shows up in injury_status.
+    # Scoped to the Chopped league only, same as strict_starter_health below.
+    if league_id == CHOPPED_LEAGUE_ID:
+        overrides, _overrides_unmatched = player_overrides.load_overrides(effective_players)
+        if _overrides_unmatched:
+            print(f"[player_overrides] {len(_overrides_unmatched)} unmatched: {_overrides_unmatched}")
+        removed_ids = {pid for pid, state in overrides.items() if state == "removed"}
+        backup_only_ids = {pid for pid, state in overrides.items() if state == "backup_only"}
+        effective_players = {
+            pid: (
+                {**p, "injury_status": p.get("injury_status") or "Override: backup only"}
+                if pid in backup_only_ids else p
+            )
+            for pid, p in effective_players.items()
+            if pid not in removed_ids
+        }
+
     available = (
         get_available_rookies(effective_players, picks)
         if rookie_draft
@@ -304,6 +333,7 @@ def _build_draft_state(draft_id, league_id, user_id):
         rosters
     )
     league_context["my_draft_slot"] = my_slot
+    league_context["strict_starter_health"] = league_id == CHOPPED_LEAGUE_ID
     if has_veteran_talent:
         league_context["is_rookie_draft"] = False
 
