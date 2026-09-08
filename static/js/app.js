@@ -270,7 +270,7 @@ function buildAvailablePoolEl(available) {
       const line = document.createElement('div');
       line.className = 'available-player-line';
       const injuryPart = p.injury_status ? `, ${p.injury_status}` : '';
-      line.textContent = `${p.name} (${p.team}) — dyn ${p.dynasty_value} / redraft ${p.redraft_value}${injuryPart}`;
+      line.textContent = `${p.name} (${p.team}) — search_rank ${p.search_rank}${injuryPart}`;
       details.appendChild(line);
     });
   });

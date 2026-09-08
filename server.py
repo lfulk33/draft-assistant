@@ -649,7 +649,7 @@ def _generate_one_bid_report(league_id, user_id):
         chopped_bid_advisor.generate_bid_report, league_name, roster_summary, available_summary, budget_summary
     )
     return {
-        "league_id": league_id, "league_name": league_name, "budget": budget_summary,
+        "league_id": league_id, "league_name": league_name, "budget": budget_summary, "is_dynasty": is_dynasty,
         "algorithmic": algorithmic, "available": available_summary, "report": report_text, "claude_error": claude_error,
     }
 

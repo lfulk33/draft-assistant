@@ -48,6 +48,7 @@ def build_roster_summary(my_roster, players, league_detail=None):
             "years_exp": p.get("years_exp"),
             "dynasty_value": p.get("fc_value"),
             "redraft_value": p.get("fc_redraft_value"),
+            "search_rank": p.get("search_rank"),
             "depth_chart_order": p.get("depth_chart_order"),
             "injury_status": p.get("injury_status"),
         })
@@ -95,6 +96,7 @@ def build_available_summary(rosters, players, per_position=15):
                 "years_exp": p.get("years_exp"),
                 "dynasty_value": p.get("fc_value"),
                 "redraft_value": p.get("fc_redraft_value"),
+                "search_rank": p.get("search_rank"),
                 "depth_chart_order": p.get("depth_chart_order"),
                 "injury_status": p.get("injury_status"),
             }

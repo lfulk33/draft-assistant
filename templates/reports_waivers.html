@@ -46,7 +46,7 @@
                       {% if plist %}
                         <div class="available-pos-label">{{ pos }}</div>
                         {% for p in plist %}
-                          <div class="available-player-line">{{ p.name }} ({{ p.team }}) &mdash; dyn {{ p.dynasty_value }} / redraft {{ p.redraft_value }}{% if p.injury_status %}, {{ p.injury_status }}{% endif %}</div>
+                          <div class="available-player-line">{{ p.name }} ({{ p.team }}) &mdash; search_rank {{ p.search_rank }}{% if p.injury_status %}, {{ p.injury_status }}{% endif %}</div>
                         {% endfor %}
                       {% endif %}
                     {% endfor %}
