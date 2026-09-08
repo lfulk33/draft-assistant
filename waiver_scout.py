@@ -149,7 +149,7 @@ def generate_waiver_report(league_name, is_dynasty, roster_summary, available_su
         # Generous budget: extended thinking + several rounds of web search
         # tool-use content eats tokens before the actual report text starts,
         # even though the final report itself stays short per the prompt.
-        max_tokens=6000,
+        max_tokens=10000,
         tools=[{
             # _20260209+ runs search through code execution and filters
             # results before they hit context ("dynamic filtering") — the
@@ -158,7 +158,13 @@ def generate_waiver_report(league_name, is_dynasty, roster_summary, available_su
             # single report this expensive.
             "type": "web_search_20260209",
             "name": "web_search",
-            "max_uses": 5,
+            # Verified live (chopped_bid_advisor's identical setup) that 5
+            # runs out almost immediately against a real available-player
+            # pool, after which the model burns most of its token budget
+            # retrying failed searches instead of writing the report —
+            # sometimes truncating the response entirely. See that file's
+            # comment for the full diagnosis.
+            "max_uses": 20,
         }],
         messages=[{"role": "user", "content": prompt}],
     )

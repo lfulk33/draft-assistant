@@ -103,11 +103,20 @@ def generate_bid_report(league_name, roster_summary, available_summary, budget_s
         # Generous budget: bid-ladder + budget-pacing reasoning is more
         # involved than the plain add/drop waiver report, which needed 6000
         # to avoid the same class of thinking-eats-the-whole-budget cutoff.
-        max_tokens=8000,
+        max_tokens=12000,
         tools=[{
             "type": "web_search_20260209",
             "name": "web_search",
-            "max_uses": 5,
+            # A real available pool easily has 8-10+ distinct players worth
+            # checking (injury status, depth-chart moves, trades) — 5 was
+            # verified live to run out almost immediately, after which the
+            # model burns most of its token budget on a doomed retry loop
+            # (repeatedly re-hitting max_uses_exceeded and narrating about
+            # it) instead of writing the report, sometimes truncating the
+            # response entirely before it finishes. 20 gives real headroom;
+            # if the model still doesn't need all of it, the tool is simply
+            # unused, no cost either way.
+            "max_uses": 20,
         }],
         messages=[{"role": "user", "content": prompt}],
     )
