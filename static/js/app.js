@@ -206,10 +206,47 @@ function renderReportCards(reports, contentId) {
       const b = r.budget;
       budgetHtml = `<div class="budget-line">Budget: $${b.remaining_budget} left of $${b.total_season_budget} · ~$${b.even_pace_baseline_per_week}/wk to make it through week ${b.last_elimination_week}</div>`;
     }
-    card.innerHTML = `<h2>${r.league_name}</h2>${budgetHtml}<div class="report-body"></div>`;
+    card.innerHTML = `<h2>${r.league_name}</h2>${budgetHtml}<div class="algo-flags-slot"></div><div class="report-body"></div>`;
+    const algoFlags = buildAlgoFlagsEl(r.algorithmic);
+    if (algoFlags) card.querySelector('.algo-flags-slot').appendChild(algoFlags);
     card.querySelector('.report-body').textContent = r.report;
     content.appendChild(card);
   });
+}
+
+function buildAlgoFlagsEl(algorithmic) {
+  const gaps = (algorithmic && algorithmic.value_gaps) || [];
+  const mismatches = (algorithmic && algorithmic.depth_chart_mismatches) || [];
+  if (!gaps.length && !mismatches.length) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'algo-flags';
+  const label = document.createElement('div');
+  label.className = 'algo-flags-label';
+  label.textContent = 'Algorithmic flags (free, no Claude)';
+  wrap.appendChild(label);
+
+  const addLine = (tag, text) => {
+    const line = document.createElement('div');
+    line.className = 'algo-flag-line';
+    const tagEl = document.createElement('span');
+    tagEl.className = 'algo-tag';
+    tagEl.textContent = tag;
+    line.appendChild(tagEl);
+    line.appendChild(document.createTextNode(text));
+    wrap.appendChild(line);
+  };
+
+  gaps.forEach(f => addLine(
+    f.criterion.replace(/_/g, ' '),
+    `${f.position} — add ${f.add} (${f.add_team}), drop ${f.drop} — ${f.reason}`
+  ));
+  mismatches.forEach(f => addLine(
+    'depth chart',
+    `${f.position} — ${f.add} (${f.add_team}) — ${f.reason}`
+  ));
+
+  return wrap;
 }
 
 function backToSetup() {

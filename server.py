@@ -26,6 +26,7 @@ from fantasypros_client import load_fantasypros_redraft_values
 import historical_stats
 import player_overrides
 import waiver_scout
+import algorithmic_waiver_scan
 import chopped_bid_advisor
 import daily_reports
 
@@ -634,11 +635,13 @@ def _generate_one_bid_report(league_id, user_id):
     if not my_roster:
         return {"league_id": league_id, "league_name": league_name, "error": "Roster not found for this user in this league."}
 
+    is_dynasty = league_detail.get("settings", {}).get("type") == 2
     roster_summary = waiver_scout.build_roster_summary(my_roster, PLAYERS, league_detail)
     available_summary = waiver_scout.build_available_summary(rosters, PLAYERS)
+    algorithmic = algorithmic_waiver_scan.run_algorithmic_scan(roster_summary, available_summary, is_dynasty)
     budget_summary = chopped_bid_advisor.build_budget_summary(my_roster, league_detail)
     report_text = chopped_bid_advisor.generate_bid_report(league_name, roster_summary, available_summary, budget_summary)
-    return {"league_id": league_id, "league_name": league_name, "budget": budget_summary, "report": report_text}
+    return {"league_id": league_id, "league_name": league_name, "budget": budget_summary, "algorithmic": algorithmic, "report": report_text}
 
 
 @app.route("/api/chopped-bid-report")

@@ -27,6 +27,17 @@
               {% if r.error %}
                 <div class="error-body">{{ r.error }}</div>
               {% else %}
+                {% if r.algorithmic and (r.algorithmic.value_gaps or r.algorithmic.depth_chart_mismatches) %}
+                  <div class="algo-flags">
+                    <div class="algo-flags-label">Algorithmic flags (free, no Claude)</div>
+                    {% for f in r.algorithmic.value_gaps %}
+                      <div class="algo-flag-line"><span class="algo-tag">{{ f.criterion.replace('_', ' ') }}</span>{{ f.position }} — add {{ f.add }} ({{ f.add_team }}), drop {{ f.drop }} &mdash; {{ f.reason }}</div>
+                    {% endfor %}
+                    {% for f in r.algorithmic.depth_chart_mismatches %}
+                      <div class="algo-flag-line"><span class="algo-tag">depth chart</span>{{ f.position }} — {{ f.add }} ({{ f.add_team }}) &mdash; {{ f.reason }}</div>
+                    {% endfor %}
+                  </div>
+                {% endif %}
                 <div class="report-body">{{ r.report }}</div>
               {% endif %}
             </div>

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from config import SLEEPER_USERNAME
 from sleeper_league import get_user, get_leagues, get_league, get_rosters, load_players
 import waiver_scout
+import algorithmic_waiver_scan
 
 REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
 WAIVER_REPORT_PATH = os.path.join(REPORTS_DIR, "waiver_report_latest.json")
@@ -35,8 +36,13 @@ def _generate_one(league, user_id, players):
     is_dynasty = league_detail.get("settings", {}).get("type") == 2
     roster_summary = waiver_scout.build_roster_summary(my_roster, players, league_detail)
     available_summary = waiver_scout.build_available_summary(rosters, players)
+    # Free, instant, zero-API-cost pass first — real value gaps and
+    # depth-chart mismatches Sleeper + FantasyCalc data already supports
+    # directly. Claude's job below is the situational judgment neither of
+    # those numbers can carry (see algorithmic_waiver_scan.py docstring).
+    algorithmic = algorithmic_waiver_scan.run_algorithmic_scan(roster_summary, available_summary, is_dynasty)
     report_text = waiver_scout.generate_waiver_report(league_name, is_dynasty, roster_summary, available_summary)
-    return {"league_id": league_id, "league_name": league_name, "report": report_text}
+    return {"league_id": league_id, "league_name": league_name, "algorithmic": algorithmic, "report": report_text}
 
 
 def run_waiver_reports(username=None):
