@@ -79,6 +79,14 @@ def build_available_summary(rosters, players, per_position=15):
             continue
         if not p.get("team"):
             continue  # not on an active NFL roster, not a real option
+        if p.get("depth_chart_position") is None:
+            # Sleeper's `team`/`active` fields go stale for long-retired
+            # players (live-verified: Ben Roethlisberger, retired since
+            # 2021, still shows team="PIT", active=true, status="Active"
+            # — a name-recognition trap for search_rank too). depth_chart_
+            # position is actually maintained for real current players;
+            # None here means he's not really on any team's depth chart.
+            continue
         by_pos[pos].append(p)
 
     summary = {}

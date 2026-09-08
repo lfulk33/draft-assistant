@@ -73,38 +73,44 @@ def _is_available_now(p):
 
 def scan_value_gaps(roster_summary, available_summary, is_dynasty):
     """
-    For each position, compare my weakest rostered player against the
-    best available free agent, by Sleeper's search_rank (lower is
-    better). Flags only when the available player is worth a real
-    margin more — not just marginally higher.
+    For each position, pair my rostered players (worst first) against
+    available free agents (best first) one-to-one — my worst vs. the top
+    free agent, my 2nd-worst vs. the 2nd-best free agent, and so on —
+    flagging every pairing that clears a real margin, by Sleeper's
+    search_rank (lower is better). Every one of my players worse than a
+    real free-agent option gets flagged individually, each against a
+    distinct free agent, rather than only ever comparing my single
+    worst player against the single best available one and leaving
+    other weak roster spots unflagged.
+
+    Both lists move in the "less favorable" direction together (my
+    players get better, free agents get worse) as the pairing advances,
+    so once one pairing fails to clear the margin, every later pairing
+    would fail too — safe to stop there.
     """
     criterion = "dynasty_long_term" if is_dynasty else "rest_of_season"
     flags = []
 
     for pos in SKILL_POSITIONS:
-        mine = roster_summary["roster_by_position"].get(pos, [])
-        avail = [p for p in available_summary.get(pos, []) if _is_available_now(p)]
+        mine = sorted(roster_summary["roster_by_position"].get(pos, []), key=_rank, reverse=True)
+        avail = sorted((p for p in available_summary.get(pos, []) if _is_available_now(p)), key=_rank)
         if not mine or not avail:
             continue
 
-        worst_mine = max(mine, key=_rank)
-        best_avail = min(avail, key=_rank)
-
-        worst_mine_rank = _rank(worst_mine)
-        best_avail_rank = _rank(best_avail)
-        if best_avail_rank == MISSING_RANK:
-            continue
-
-        if worst_mine_rank > best_avail_rank * VALUE_GAP_MARGIN:
+        for my_player, avail_player in zip(mine, avail):
+            my_rank = _rank(my_player)
+            avail_rank = _rank(avail_player)
+            if avail_rank == MISSING_RANK or my_rank <= avail_rank * VALUE_GAP_MARGIN:
+                break
             flags.append({
                 "position": pos,
                 "criterion": criterion,
-                "add": best_avail["name"],
-                "add_team": best_avail.get("team"),
-                "add_search_rank": best_avail_rank,
-                "drop": worst_mine["name"],
-                "drop_search_rank": worst_mine_rank,
-                "reason": f"search_rank {best_avail_rank} vs {worst_mine_rank}",
+                "add": avail_player["name"],
+                "add_team": avail_player.get("team"),
+                "add_search_rank": avail_rank,
+                "drop": my_player["name"],
+                "drop_search_rank": my_rank,
+                "reason": f"search_rank {avail_rank} vs {my_rank}",
             })
 
     return flags
