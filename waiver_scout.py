@@ -83,11 +83,9 @@ def build_available_summary(rosters, players, per_position=15):
 
     summary = {}
     for pos, plist in by_pos.items():
-        ranked = sorted(
-            plist,
-            key=lambda p: max(p.get("fc_value") or 0, p.get("fc_redraft_value") or 0, -(p.get("search_rank") or 9999)),
-            reverse=True
-        )
+        # search_rank is lower-is-better; players with no rank at all sort
+        # last rather than accidentally outranking real ranked players.
+        ranked = sorted(plist, key=lambda p: p.get("search_rank") if p.get("search_rank") is not None else 9999)
         summary[pos] = [
             {
                 "name": p.get("full_name"),
