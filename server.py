@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
 
@@ -27,6 +27,7 @@ import historical_stats
 import player_overrides
 import waiver_scout
 import chopped_bid_advisor
+import daily_reports
 
 # Load players once at startup
 PLAYERS = {str(k): v for k, v in load_players().items()}
@@ -605,6 +606,23 @@ def api_waiver_report():
 
     results.sort(key=lambda r: league_ids.index(r["league_id"]))
     return jsonify({"generated_at": __import__("datetime").datetime.utcnow().isoformat() + "Z", "reports": results})
+
+
+@app.route("/reports/waivers")
+def reports_waivers():
+    """
+    Bookmarkable page showing the last cron-generated waiver report across
+    every league (see daily_reports.py) — no button to click, no leagues
+    to pick, just whatever the morning run produced. Distinct from
+    /api/waiver-report + the "Scout Waivers" UI mode, which still exist
+    for on-demand runs against whichever leagues you select live.
+    """
+    import json
+    if not os.path.exists(daily_reports.WAIVER_REPORT_PATH):
+        return render_template("reports_waivers.html", generated_at=None, reports=[])
+    with open(daily_reports.WAIVER_REPORT_PATH) as f:
+        payload = json.load(f)
+    return render_template("reports_waivers.html", generated_at=payload.get("generated_at"), reports=payload.get("reports", []))
 
 
 def _generate_one_bid_report(league_id, user_id):

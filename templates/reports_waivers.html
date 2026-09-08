@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Waiver Report</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+
+<body>
+  <div class="screen active">
+    <div class="waivers-wrap">
+      <h1>Daily Waiver Report</h1>
+      {% if not generated_at %}
+        <div class="waivers-sub">Not generated yet — the daily cron hasn't run. Run <code>python3 daily_reports.py</code> to generate it now.</div>
+      {% else %}
+        <div class="waivers-sub">Generated {{ generated_at }} &middot; <a href="/reports/waivers">refresh page</a></div>
+        <div id="waivers-content">
+          {% for r in reports %}
+            <div class="waiver-league-card">
+              <h2>{{ r.league_name }}</h2>
+              {% if r.error %}
+                <div class="error-body">{{ r.error }}</div>
+              {% else %}
+                <div class="report-body">{{ r.report }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</body>
+
+</html>
