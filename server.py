@@ -567,8 +567,10 @@ def _generate_one_waiver_report(league_id, user_id):
     is_dynasty = league_detail.get("settings", {}).get("type") == 2
     roster_summary = waiver_scout.build_roster_summary(my_roster, PLAYERS, league_detail)
     available_summary = waiver_scout.build_available_summary(rosters, PLAYERS)
-    report_text = waiver_scout.generate_waiver_report(league_name, is_dynasty, roster_summary, available_summary)
-    return {"league_id": league_id, "league_name": league_name, "report": report_text}
+    report_text, claude_error = waiver_scout.safe_generate_report(
+        waiver_scout.generate_waiver_report, league_name, is_dynasty, roster_summary, available_summary
+    )
+    return {"league_id": league_id, "league_name": league_name, "report": report_text, "claude_error": claude_error}
 
 
 @app.route("/api/waiver-report")
@@ -640,8 +642,13 @@ def _generate_one_bid_report(league_id, user_id):
     available_summary = waiver_scout.build_available_summary(rosters, PLAYERS)
     algorithmic = algorithmic_waiver_scan.run_algorithmic_scan(roster_summary, available_summary, is_dynasty)
     budget_summary = chopped_bid_advisor.build_budget_summary(my_roster, league_detail)
-    report_text = chopped_bid_advisor.generate_bid_report(league_name, roster_summary, available_summary, budget_summary)
-    return {"league_id": league_id, "league_name": league_name, "budget": budget_summary, "algorithmic": algorithmic, "report": report_text}
+    report_text, claude_error = waiver_scout.safe_generate_report(
+        chopped_bid_advisor.generate_bid_report, league_name, roster_summary, available_summary, budget_summary
+    )
+    return {
+        "league_id": league_id, "league_name": league_name, "budget": budget_summary,
+        "algorithmic": algorithmic, "report": report_text, "claude_error": claude_error,
+    }
 
 
 @app.route("/api/chopped-bid-report")

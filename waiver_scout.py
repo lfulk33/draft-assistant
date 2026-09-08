@@ -185,3 +185,31 @@ def generate_waiver_report(league_name, is_dynasty, roster_summary, available_su
         if block.type == "text" and i > last_tool_idx
     ]
     return "".join(text_blocks).strip()
+
+
+def safe_generate_report(generate_fn, *args, **kwargs):
+    """
+    Calls a Claude-based report generator (generate_waiver_report here,
+    chopped_bid_advisor.generate_bid_report elsewhere) and catches any
+    failure — API credit exhaustion, rate limits, network errors — rather
+    than letting it propagate. Without this, a Claude outage was wiping
+    out the already-computed algorithmic flags alongside it too: the
+    caller computes those first, then this call raises, and the whole
+    per-league result gets replaced by a bare exception string with
+    nothing salvaged. Live-verified failure mode tonight (API credit
+    balance ran out mid-session).
+
+    Returns (report_text, error): error is None on success; on failure,
+    report_text is a friendly fallback message and error is the raw
+    exception string, so callers can still surface both without losing
+    whatever succeeded before this call.
+    """
+    try:
+        return generate_fn(*args, **kwargs), None
+    except Exception as e:
+        msg = str(e)
+        if "credit balance is too low" in msg:
+            friendly = "Claude's situational analysis is unavailable right now — API credit balance is too low. Add credits at console.anthropic.com. Algorithmic flags above are unaffected."
+        else:
+            friendly = f"Claude's situational analysis is unavailable right now ({msg[:200]}). Algorithmic flags above are unaffected."
+        return friendly, msg

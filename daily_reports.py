@@ -41,8 +41,13 @@ def _generate_one(league, user_id, players):
     # directly. Claude's job below is the situational judgment neither of
     # those numbers can carry (see algorithmic_waiver_scan.py docstring).
     algorithmic = algorithmic_waiver_scan.run_algorithmic_scan(roster_summary, available_summary, is_dynasty)
-    report_text = waiver_scout.generate_waiver_report(league_name, is_dynasty, roster_summary, available_summary)
-    return {"league_id": league_id, "league_name": league_name, "algorithmic": algorithmic, "report": report_text}
+    report_text, claude_error = waiver_scout.safe_generate_report(
+        waiver_scout.generate_waiver_report, league_name, is_dynasty, roster_summary, available_summary
+    )
+    return {
+        "league_id": league_id, "league_name": league_name,
+        "algorithmic": algorithmic, "report": report_text, "claude_error": claude_error,
+    }
 
 
 def run_waiver_reports(username=None):
