@@ -570,7 +570,10 @@ def _generate_one_waiver_report(league_id, user_id):
     report_text, claude_error = waiver_scout.safe_generate_report(
         waiver_scout.generate_waiver_report, league_name, is_dynasty, roster_summary, available_summary
     )
-    return {"league_id": league_id, "league_name": league_name, "report": report_text, "claude_error": claude_error}
+    return {
+        "league_id": league_id, "league_name": league_name,
+        "available": available_summary, "report": report_text, "claude_error": claude_error,
+    }
 
 
 @app.route("/api/waiver-report")
@@ -647,7 +650,7 @@ def _generate_one_bid_report(league_id, user_id):
     )
     return {
         "league_id": league_id, "league_name": league_name, "budget": budget_summary,
-        "algorithmic": algorithmic, "report": report_text, "claude_error": claude_error,
+        "algorithmic": algorithmic, "available": available_summary, "report": report_text, "claude_error": claude_error,
     }
 
 

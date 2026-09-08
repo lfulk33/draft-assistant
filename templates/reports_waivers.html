@@ -39,6 +39,19 @@
                   </div>
                 {% endif %}
                 <div class="report-body">{{ r.report }}</div>
+                {% if r.available %}
+                  <details class="available-pool">
+                    <summary>Available players by position</summary>
+                    {% for pos, plist in r.available.items() %}
+                      {% if plist %}
+                        <div class="available-pos-label">{{ pos }}</div>
+                        {% for p in plist %}
+                          <div class="available-player-line">{{ p.name }} ({{ p.team }}) &mdash; dyn {{ p.dynasty_value }} / redraft {{ p.redraft_value }}{% if p.injury_status %}, {{ p.injury_status }}{% endif %}</div>
+                        {% endfor %}
+                      {% endif %}
+                    {% endfor %}
+                  </details>
+                {% endif %}
               {% endif %}
             </div>
           {% endfor %}

@@ -46,7 +46,7 @@ def _generate_one(league, user_id, players):
     )
     return {
         "league_id": league_id, "league_name": league_name,
-        "algorithmic": algorithmic, "report": report_text, "claude_error": claude_error,
+        "algorithmic": algorithmic, "available": available_summary, "report": report_text, "claude_error": claude_error,
     }
 
 

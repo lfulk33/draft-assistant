@@ -206,10 +206,12 @@ function renderReportCards(reports, contentId) {
       const b = r.budget;
       budgetHtml = `<div class="budget-line">Budget: $${b.remaining_budget} left of $${b.total_season_budget} · ~$${b.even_pace_baseline_per_week}/wk to make it through week ${b.last_elimination_week}</div>`;
     }
-    card.innerHTML = `<h2>${r.league_name}</h2>${budgetHtml}<div class="algo-flags-slot"></div><div class="report-body"></div>`;
+    card.innerHTML = `<h2>${r.league_name}</h2>${budgetHtml}<div class="algo-flags-slot"></div><div class="report-body"></div><div class="available-pool-slot"></div>`;
     const algoFlags = buildAlgoFlagsEl(r.algorithmic);
     if (algoFlags) card.querySelector('.algo-flags-slot').appendChild(algoFlags);
     card.querySelector('.report-body').textContent = r.report;
+    const availablePool = buildAvailablePoolEl(r.available);
+    if (availablePool) card.querySelector('.available-pool-slot').appendChild(availablePool);
     content.appendChild(card);
   });
 }
@@ -247,6 +249,33 @@ function buildAlgoFlagsEl(algorithmic) {
   ));
 
   return wrap;
+}
+
+function buildAvailablePoolEl(available) {
+  if (!available || !Object.values(available).some(list => list && list.length)) return null;
+
+  const details = document.createElement('details');
+  details.className = 'available-pool';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Available players by position';
+  details.appendChild(summary);
+
+  Object.entries(available).forEach(([pos, plist]) => {
+    if (!plist || !plist.length) return;
+    const label = document.createElement('div');
+    label.className = 'available-pos-label';
+    label.textContent = pos;
+    details.appendChild(label);
+    plist.forEach(p => {
+      const line = document.createElement('div');
+      line.className = 'available-player-line';
+      const injuryPart = p.injury_status ? `, ${p.injury_status}` : '';
+      line.textContent = `${p.name} (${p.team}) — dyn ${p.dynasty_value} / redraft ${p.redraft_value}${injuryPart}`;
+      details.appendChild(line);
+    });
+  });
+
+  return details;
 }
 
 function backToSetup() {

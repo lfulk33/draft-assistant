@@ -354,6 +354,32 @@ body {
   margin-right: 6px;
 }
 
+.available-pool {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.available-pool summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.available-pos-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--gray-600);
+  margin: 10px 0 4px;
+}
+
+.available-player-line {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--gray-800);
+}
+
 .waivers-loading-note,
 .waivers-empty-note {
   color: var(--gray-600);
